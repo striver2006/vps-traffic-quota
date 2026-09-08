@@ -34,6 +34,15 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT/build/VPSQuota.icns" "$RESOURCES_DIR/VPSQuota.icns"
 
+# 随包带上文档，供「帮助 → 使用说明」打开
+cp "$ROOT/../README.md" "$RESOURCES_DIR/README.md"
+cp -R "$ROOT/../docs" "$RESOURCES_DIR/docs"
+
+# 声明简体中文本地化：没有这个目录时，macOS 会把 Edit/View/Window 等
+# 标准菜单显示成英文，与中文的应用名对不上。
+mkdir -p "$RESOURCES_DIR/zh-Hans.lproj"
+touch "$RESOURCES_DIR/zh-Hans.lproj/InfoPlist.strings"
+
 # SwiftPM 会把资源打成 .bundle 放在 bin 目录下，需要一并搬进 Resources。
 for bundle in "$BIN_PATH"/*.bundle; do
     [ -e "$bundle" ] || continue
@@ -54,6 +63,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+    </array>
     <!-- 菜单栏常驻应用：不在 Dock 显示图标，也不占用程序坞空间 -->
     <key>LSUIElement</key><true/>
     <key>NSHumanReadableCopyright</key><string></string>

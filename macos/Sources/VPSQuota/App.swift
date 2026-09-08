@@ -42,6 +42,19 @@ struct VPSQuotaApp: App {
         .defaultSize(width: 900, height: 600)
         .commands {
             CommandGroup(replacing: .newItem) {}   // 主窗口是单例，不提供"新建"
+
+            // 默认的「帮助」菜单指向一本并不存在的帮助书，点了只会弹
+            // “Help isn't available for …”。换成两个真正有用的入口。
+            CommandGroup(replacing: .help) {
+                Button("使用说明") {
+                    if let url = Bundle.main.url(forResource: "README", withExtension: "md") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Button("打开配置文件夹") {
+                    NSWorkspace.shared.open(AppPaths.directory)
+                }
+            }
         }
 
         // isInserted 让用户能彻底关掉菜单栏项（选「仅 Dock」时）。

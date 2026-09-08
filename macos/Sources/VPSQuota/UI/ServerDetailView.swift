@@ -108,7 +108,10 @@ struct ServerDetailContent: View {
     }
 
     private func points(_ status: ServerStatus) -> [ChartPoint] {
-        var cumulative = 0.0
+        // 累计曲线必须从「起始已用量」起步，否则它的终点会和头部显示的已用量对不上 ——
+        // 同一个界面上两个数字打架，比没有图还糟。
+        var cumulative = status.server.usageBaseline
+            .flatMap { $0.applies(to: status.period) ? $0.usedGB : nil } ?? 0
         return status.days.compactMap { day in
             guard let date = UTCDay.date(from: day.day) else { return nil }
             let bytes = status.server.meterMode.billedBytes(rx: day.rxBytes, tx: day.txBytes)
@@ -118,6 +121,11 @@ struct ServerDetailContent: View {
         }
     }
 
+    /// 横轴固定为整个账期，而不是让 Swift Charts 按现有数据自动缩放。
+    ///
+    /// 两个好处：只有一天数据时不会退化成"按小时"的横轴、一根柱子占满整张图；
+    /// 更重要的是账期内缺失的日子会显示成空白 —— 数据缺口本身就是需要看见的信息
+    /// （例如 vnstat 中途才装上的那段）。
     @ViewBuilder
     private func charts(_ status: ServerStatus) -> some View {
         let data = points(status)
@@ -141,6 +149,7 @@ struct ServerDetailContent: View {
                     )
                     .foregroundStyle(status.severity.color.opacity(0.75))
                 }
+                .chartXScale(domain: status.period.start...status.period.end)
                 .chartYAxisLabel("GB")
                 .frame(height: 130)
 
@@ -154,6 +163,14 @@ struct ServerDetailContent: View {
                             y: .value("累计", point.cumulativeGB)
                         )
                         .foregroundStyle(status.severity.color)
+                        // 只有一天数据时画不出线段，补一个点，否则整张图看着是空的。
+                        if data.count == 1 {
+                            PointMark(
+                                x: .value("日期", point.date, unit: .day),
+                                y: .value("累计", point.cumulativeGB)
+                            )
+                            .foregroundStyle(status.severity.color)
+                        }
                         AreaMark(
                             x: .value("日期", point.date, unit: .day),
                             y: .value("累计", point.cumulativeGB)
@@ -172,6 +189,7 @@ struct ServerDetailContent: View {
                             }
                     }
                 }
+                .chartXScale(domain: status.period.start...status.period.end)
                 .chartYAxisLabel("GB")
                 .frame(height: 150)
             }
