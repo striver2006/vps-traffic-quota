@@ -31,7 +31,7 @@ jobs:
     steps:
       # 不能用 sparse-checkout：SchemaConsistencyTests 与 CrossPlatformConfigTests
       # 通过 #filePath 回溯到仓库根，读取 shared/schema.sql 与 shared/config.example.json
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 工具链版本（构建失败时先看这一段）
         run: |
@@ -72,7 +72,7 @@ jobs:
         run: ditto -c -k --keepParent build/VPSQuota.app build/VPSQuota.app.zip
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VPSQuota-macos
           path: macos/build/VPSQuota.app.zip
@@ -87,11 +87,11 @@ jobs:
       run:
         working-directory: windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # windows-latest 目前预装 .NET 8，但预装集合会随镜像更新漂移
       # （.NET 8 于 2026-11 结束支持），显式声明只花十几秒
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
@@ -116,7 +116,7 @@ jobs:
         run: dotnet publish VpsQuota/VpsQuota.csproj -c Release --no-build -o publish
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VpsQuota-windows
           path: windows/publish/
