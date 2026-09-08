@@ -1,6 +1,20 @@
-# VPS 流量配额监控
+<div align="center">
 
-**简体中文** · [English](README.en.md)
+# 📊 VPS 流量配额监控
+
+---
+
+### 流量配额监控 · VPS Traffic Quota Monitor
+
+**跨平台（macOS / Windows）VPS 月度流量用量监控状态栏工具**
+
+[![CI](https://github.com/striver2006/vps-traffic-quota/actions/workflows/ci.yml/badge.svg)](https://github.com/striver2006/vps-traffic-quota/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) ![Platform](https://img.shields.io/badge/Platform-macOS%2015%2B-000000?logo=apple&logoColor=white) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white) ![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white) ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white) ![i18n](https://img.shields.io/badge/i18n-%E4%B8%AD%E6%96%87%20%7C%20English-success)
+
+**简体中文** | [English](README.en.md)
+
+</div>
+
+---
 
 监控 DMIT 与 Vultr 上多台 VPS 的月度流量用量，本地桌面常驻，定时自动采集。
 
@@ -11,13 +25,13 @@
 
 ---
 
-## 它解决什么问题
+## 🎯 它解决什么问题 (The Problem)
 
 DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看到，
 而超额的代价是限速或停机。这个工具把各家机器的用量集中到一处，
 并按当前速度外推「这个月底会用到多少」，让你在撞上配额之前就知道。
 
-## 数据从哪来
+## 🔌 数据从哪来 (Data Sources)
 
 | 服务商 | 途径 | 说明 |
 |---|---|---|
@@ -43,7 +57,7 @@ DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看�
 
 ---
 
-## 快速开始
+## 🚀 快速开始 (Quick Start)
 
 ### 1. 准备服务商侧
 
@@ -113,7 +127,7 @@ dotnet build VpsQuota.sln -c Release
 
 ---
 
-## 配置
+## ⚙️ 配置 (Configuration)
 
 字段逐项说明见 [`docs/config-reference.md`](docs/config-reference.md)，
 模板见 [`shared/config.example.json`](shared/config.example.json)。
@@ -148,7 +162,7 @@ vnstat 只统计它自己开始记录之后的流量，所以中途接入时本�
 
 ---
 
-## 项目结构
+## 📁 项目结构 (Project Layout)
 
 ```
 ├── shared/          两端共用的 schema 与配置模板
@@ -172,10 +186,10 @@ CLI 与图形界面也共用同一套刷新逻辑。
 
 ---
 
-## 更新日志
+## 📝 更新日志 (Changelog)
 
 见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 许可证
+## 📄 许可证 (License)
 
 [GPL-3.0](LICENSE)

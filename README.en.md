@@ -1,6 +1,20 @@
-# VPS Traffic Quota
+<div align="center">
 
-[简体中文](README.md) · **English**
+# 📊 VPS Traffic Quota
+
+---
+
+### VPS Traffic Quota Monitor · 流量配额监控
+
+**A cross-platform (macOS / Windows) status-bar tool for monitoring monthly VPS bandwidth usage**
+
+[![CI](https://github.com/striver2006/vps-traffic-quota/actions/workflows/ci.yml/badge.svg)](https://github.com/striver2006/vps-traffic-quota/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE) ![Platform](https://img.shields.io/badge/Platform-macOS%2015%2B-000000?logo=apple&logoColor=white) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white) ![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white) ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white) ![i18n](https://img.shields.io/badge/i18n-%E4%B8%AD%E6%96%87%20%7C%20English-success)
+
+[简体中文](README.md) | **English**
+
+</div>
+
+---
 
 Monitor monthly bandwidth usage across VPS instances on DMIT and Vultr.
 Runs locally in your desktop's status area, collects on a schedule.
@@ -14,7 +28,7 @@ and local database schema.
 
 ---
 
-## The problem
+## 🎯 The Problem (它解决什么问题)
 
 DMIT and Vultr each require logging into a separate panel and clicking through every
 instance just to see where its bandwidth stands — and the cost of going over is
@@ -24,7 +38,7 @@ This tool pulls usage from every provider into one place and extrapolates
 "where will this month end up at the current rate", so you find out *before* you
 hit the cap rather than after.
 
-## Where the data comes from
+## 🔌 Where the Data Comes From (数据从哪来)
 
 | Provider | Method | Notes |
 |---|---|---|
@@ -51,7 +65,7 @@ accumulate indefinitely — and a failed collection never blanks out the UI.
 
 ---
 
-## Quick start
+## 🚀 Quick Start (快速开始)
 
 ### 1. Provider side
 
@@ -129,7 +143,7 @@ To launch at login, put a shortcut to `VpsQuota.exe` in `shell:startup`
 
 ---
 
-## Configuration
+## ⚙️ Configuration (配置)
 
 Field-by-field reference: [`docs/config-reference.md`](docs/config-reference.md).
 Template: [`shared/config.example.json`](shared/config.example.json).
@@ -170,7 +184,7 @@ trust the provider's panel.
 
 ---
 
-## Project layout
+## 📁 Project Layout (项目结构)
 
 ```
 ├── shared/          schema and config template shared by both platforms
@@ -191,11 +205,11 @@ all directly unit-testable, and the CLI and GUI share one refresh path.
 See [`docs/architecture.md`](docs/architecture.md) for the design rationale and
 [`docs/requirements.md`](docs/requirements.md) for scope and explicit non-goals.
 
-## Contributing
+## 🤝 Contributing (参与开发)
 
 Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 Adding a provider means implementing one collector; nothing else changes.
 
-## License
+## 📄 License (许可证)
 
 [GPL-3.0](LICENSE)
