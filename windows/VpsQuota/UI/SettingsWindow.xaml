@@ -1,133 +1,259 @@
 <Window x:Class="VpsQuota.UI.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="设置" Height="600" Width="820"
-        MinHeight="500" MinWidth="740"
+        Title="设置" Height="660" Width="920"
+        MinHeight="540" MinWidth="780"
         FontFamily="Microsoft YaHei UI, Segoe UI"
-        Background="White"
-        WindowStartupLocation="CenterOwner">
+        Background="{StaticResource PageBrush}"
+        Icon="pack://application:,,,/Assets/app.ico"
+        WindowStartupLocation="CenterOwner"
+        UseLayoutRounding="True">
 
-    <Grid Margin="14">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="212"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="230"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
 
-        <!-- 左栏：服务器列表 + 增删 -->
-        <DockPanel Grid.Row="0" Grid.Column="0">
-            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
-                <Button Content="添加 Vultr" Padding="8,4" Click="OnAddVultrClick"/>
-                <Button Content="添加 SSH" Padding="8,4" Margin="6,0,0,0" Click="OnAddSshClick"/>
-                <Button x:Name="RemoveButton" Content="删除" Padding="8,4" Margin="6,0,0,0"
-                        Click="OnRemoveClick"/>
-            </StackPanel>
-            <ListBox x:Name="ServerList" BorderBrush="#E5E5E5" BorderThickness="1"
-                     SelectionChanged="OnSelectionChanged"/>
-        </DockPanel>
-
-        <!-- 右栏：通用设置 + 选中服务器的编辑表单 -->
-        <ScrollViewer Grid.Row="0" Grid.Column="1" Margin="14,0,0,0"
-                      VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <TextBlock Text="通用" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,8"/>
-
-                <TextBlock Text="Vultr API Key" FontSize="12"/>
-                <PasswordBox x:Name="ApiKeyBox" Padding="4" Margin="0,3,0,3"/>
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,10"
-                           Text="在 Vultr 后台 Account → API 页面创建。该页面默认启用访问控制，需要把你当前的出口 IP 加入允许列表，否则会返回 403。密钥用 Windows DPAPI 以当前用户身份加密保存，不写入配置文件。"/>
-
-                <TextBlock Text="自动刷新" FontSize="12"/>
-                <ComboBox x:Name="IntervalBox" Margin="0,3,0,3" SelectedValuePath="Tag">
-                    <ComboBoxItem Content="每 15 分钟" Tag="15"/>
-                    <ComboBoxItem Content="每小时" Tag="60"/>
-                    <ComboBoxItem Content="每 6 小时" Tag="360"/>
-                    <ComboBoxItem Content="每天" Tag="1440"/>
-                </ComboBox>
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,14"
-                           Text="Vultr 的带宽数据本身是周期性刷新的，并非实时，刷新过于频繁没有意义。"/>
-
-                <Separator Margin="0,0,0,14"/>
-
-                <StackPanel x:Name="ServerPanel" Visibility="Collapsed">
-                    <TextBlock Text="服务器" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,8"/>
-
-                    <TextBlock Text="名称" FontSize="12"/>
-                    <TextBox x:Name="NameBox" Padding="4" Margin="0,3,0,8"/>
-
-                    <!-- Vultr 专用 -->
-                    <StackPanel x:Name="VultrPanel">
-                        <TextBlock Text="Vultr 实例 ID" FontSize="12"/>
-                        <TextBox x:Name="InstanceIdBox" Padding="4" Margin="0,3,0,3"/>
-                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,8"
-                                   Text="在 Vultr 实例页面的 URL 里可以找到。"/>
-                    </StackPanel>
-
-                    <!-- SSH 专用 -->
-                    <StackPanel x:Name="SshPanel">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="90"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <TextBlock Text="主机" FontSize="12"/>
-                                <TextBox x:Name="HostBox" Padding="4" Margin="0,3,0,8"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="端口" FontSize="12"/>
-                                <TextBox x:Name="PortBox" Padding="4" Margin="0,3,0,8"/>
-                            </StackPanel>
-                        </Grid>
-
-                        <TextBlock Text="用户名" FontSize="12"/>
-                        <TextBox x:Name="UserBox" Padding="4" Margin="0,3,0,8"/>
-
-                        <TextBlock Text="私钥路径" FontSize="12"/>
-                        <TextBox x:Name="KeyPathBox" Padding="4" Margin="0,3,0,8"/>
-
-                        <TextBlock Text="网卡（留空则用 vnstat 的默认网卡）" FontSize="12"/>
-                        <TextBox x:Name="InterfaceBox" Padding="4" Margin="0,3,0,3"/>
-                        <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,8"
-                                   Text="需要服务器上已安装并启用 vnstat，且本机能免密 SSH 登录（仅支持密钥认证）。详见 github.com/striver2006/vps-traffic-quota 的 docs/setup-dmit.md。"/>
-                    </StackPanel>
-
-                    <TextBlock Text="月配额（GB，Vultr 填 0 表示自动采用 API 报告的值）" FontSize="12"/>
-                    <TextBox x:Name="QuotaBox" Padding="4" Margin="0,3,0,8"/>
-
-                    <TextBlock Text="计费口径" FontSize="12"/>
-                    <ComboBox x:Name="MeterBox" Margin="0,3,0,8"/>
-
-                    <TextBlock Text="GB 进制" FontSize="12"/>
-                    <ComboBox x:Name="UnitBox" Margin="0,3,0,8"/>
-
-                    <TextBlock Text="每月重置日" FontSize="12"/>
-                    <ComboBox x:Name="ResetDayBox" Margin="0,3,0,3"/>
-                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,10"
-                               Text="配额在每月这一天归零。当月没有该日时（例如 31 号遇上 2 月）按当月最后一天处理。计费口径与进制填错会直接导致数字对不上服务商面板，首次配置后请用面板数值校准一次。"/>
-
-                    <TextBlock Text="开始监控前已用（GB）" FontSize="12"/>
-                    <TextBox x:Name="BaselineBox" Padding="4" Margin="0,3,0,3"/>
-                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,3"
-                               Text="在账期中途才装上 vnstat（或数据库被重建过）时，之前的流量本地没有记录，面板会显示得远低于真实值。从服务商面板抄一个当时的已用量填在这里，就能把缺口补上。"/>
-                    <TextBlock x:Name="BaselinePeriodText" FontSize="11" Foreground="#999" Margin="0,0,0,10"/>
-
-                    <StackPanel Orientation="Horizontal">
-                        <Button x:Name="TestButton" Content="测试连接" Padding="12,5" Click="OnTestClick"/>
-                    </StackPanel>
-                    <TextBlock x:Name="TestResult" TextWrapping="Wrap" FontSize="11" Margin="0,8,0,0"/>
+        <!-- 左侧导航：把“服务器”与“通用”明确拆开，避免所有配置堆在同一页 -->
+        <Border Grid.Row="0" Grid.Column="0" Margin="12" Padding="10"
+                Background="#FFFFFF" BorderBrush="{StaticResource CardBorderBrush}"
+                BorderThickness="1" CornerRadius="12">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="设置" FontSize="19" FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimaryBrush}" Margin="8,3,0,12"/>
+                    <Button x:Name="ServersNavButton" Content="🖥  服务器配置"
+                            Style="{StaticResource NavActiveButton}" Margin="0,0,0,7"
+                            Click="OnShowServersClick"/>
+                    <Button x:Name="GeneralNavButton" Content="⚙  通用设置"
+                            Style="{StaticResource NavButton}"
+                            Click="OnShowGeneralClick"/>
                 </StackPanel>
+                <TextBlock Text="服务器配置决定每台 VPS 怎么连接、怎么计费；通用设置只放全局凭据和刷新频率。"
+                           FontSize="12" Foreground="{StaticResource TextMutedBrush}"
+                           TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="8,0,8,6"/>
+            </DockPanel>
+        </Border>
+
+        <!-- 服务器配置页 -->
+        <Grid x:Name="ServersPage" Grid.Row="0" Grid.Column="1" Margin="0,12,12,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="255"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock Text="服务器" Style="{StaticResource SectionTitle}" Margin="6,0,0,8"/>
+                        <StackPanel Orientation="Horizontal" Margin="4,0,4,10">
+                            <Button Content="Vultr" Padding="10,6" Click="OnAddVultrClick"/>
+                            <Button Content="SSH" Padding="10,6" Margin="6,0,0,0" Click="OnAddSshClick"/>
+                            <Button x:Name="RemoveButton" Content="删除" Padding="10,6" Margin="6,0,0,0"
+                                    Click="OnRemoveClick"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <ListBox x:Name="ServerList" Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="OnSelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border x:Name="ItemShell" Padding="10,9" CornerRadius="8"
+                                        Background="Transparent" Margin="0,2">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"
+                                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding ProviderName}" FontSize="12" Margin="0,3,0,0"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
+                                        <Setter TargetName="ItemShell" Property="Background">
+                                            <Setter.Value>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#EAF2FF" Offset="0"/>
+                                                    <GradientStop Color="#F4EBFF" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="12,0,0,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="2">
+                        <TextBlock Text="编辑服务器" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="只影响当前选中的这台服务器。" Style="{StaticResource SectionIntro}"
+                                   Margin="0,4,0,16"/>
+
+                        <StackPanel x:Name="ServerPanel" Visibility="Collapsed">
+                            <TextBlock Text="基本信息" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{StaticResource BrandBrush}" Margin="0,0,0,8"/>
+                            <TextBlock Text="名称" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="NameBox" Padding="7,6" Margin="0,0,0,12"/>
+
+                            <StackPanel x:Name="VultrPanel">
+                                <TextBlock Text="Vultr 实例 ID" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="InstanceIdBox" Padding="7,6" Margin="0,0,0,4"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="在 Vultr 实例页面的 URL 里可以找到。"/>
+                                <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
+                            </StackPanel>
+
+                            <StackPanel x:Name="SshPanel">
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="96"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                        <TextBlock Text="主机" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="HostBox" Padding="7,6"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="端口" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="PortBox" Padding="7,6"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="用户名" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="UserBox" Padding="7,6" Margin="0,0,0,12"/>
+
+                                <TextBlock Text="私钥路径" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="KeyPathBox" Padding="7,6" Margin="0,0,0,12"/>
+
+                                <TextBlock Text="网卡" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="InterfaceBox" Padding="7,6" Margin="0,0,0,4"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="留空则使用 vnstat 的默认网卡。需要服务器已安装并启用 vnstat，且本机能免密 SSH 登录。"/>
+                                <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
+                            </StackPanel>
+
+                            <TextBlock Text="流量与账期" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{StaticResource BrandBrush}" Margin="0,0,0,10"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                    <TextBlock Text="月配额（GB）" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="QuotaBox" Padding="7,6"/>
+                                    <TextBlock Style="{StaticResource FieldHelp}"
+                                               Text="Vultr 填 0 表示自动采用 API 报告值；SSH 服务器需按套餐填写。"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="每月重置日" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="ResetDayBox" Padding="7,6"/>
+                                </StackPanel>
+                            </Grid>
+                            <Separator Background="#EEF2F7" Margin="0,16,0,14"/>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                    <TextBlock Text="计费口径" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="MeterBox" Padding="7,6"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="GB 进制" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="UnitBox" Padding="7,6"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Style="{StaticResource FieldHelp}"
+                                       Text="配额在每月重置日归零；当月没有该日时按当月最后一天处理。口径与进制填错会导致数字对不上服务商面板，首次配置后建议校准一次。"
+                                       Margin="0,8,0,14"/>
+
+                            <TextBlock Text="开始监控前已用（GB）" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="BaselineBox" Padding="7,6" MaxWidth="220" HorizontalAlignment="Left"/>
+                            <TextBlock Style="{StaticResource FieldHelp}"
+                                       Text="在账期中途才安装 vnstat 时，从服务商面板抄一个当时的已用量填在这里，用于补上本地没有的历史流量。"/>
+                            <TextBlock x:Name="BaselinePeriodText" FontSize="12" Foreground="#64748B" Margin="0,4,0,16"/>
+
+                            <Separator Background="#EEF2F7" Margin="0,0,0,14"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="TestButton" Content="测试连接并采集" Padding="15,7"
+                                        Style="{StaticResource PrimaryButton}" Click="OnTestClick"/>
+                            </StackPanel>
+                            <TextBlock x:Name="TestResult" TextWrapping="Wrap" FontSize="12" Margin="0,9,0,0"/>
+                        </StackPanel>
+
+                        <Border x:Name="EmptyServerPanel" Visibility="Visible"
+                                Background="#F8FAFC" BorderBrush="{StaticResource CardBorderBrush}"
+                                BorderThickness="1" CornerRadius="9" Padding="22">
+                            <StackPanel>
+                                <TextBlock Text="还没有服务器" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                                <TextBlock Text="从左侧添加一台 Vultr 实例，或添加任意支持 SSH + vnstat 的 VPS。"
+                                           Style="{StaticResource FieldHelp}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <!-- 通用设置页：全局凭据与刷新频率，不再混在服务器表单里 -->
+        <ScrollViewer x:Name="GeneralPage" Grid.Row="0" Grid.Column="1" Margin="0,12,12,12"
+                      Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+                <TextBlock Text="通用设置" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="这些配置作用于所有服务器。" Style="{StaticResource SectionIntro}"
+                           Margin="0,4,0,16"/>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Vultr API" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="API Key" Style="{StaticResource FieldLabel}" Margin="0,12,0,4"/>
+                        <PasswordBox x:Name="ApiKeyBox" Padding="7,6"/>
+                        <TextBlock Style="{StaticResource FieldHelp}"
+                                   Text="在 Vultr 后台 Account → API 页面创建。该页面默认启用访问控制，需要把当前出口 IP 加入允许列表，否则会返回 403。密钥使用 Windows DPAPI 以当前用户身份加密保存，不写入配置文件。"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="自动刷新" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="刷新频率" Style="{StaticResource FieldLabel}" Margin="0,12,0,4"/>
+                        <ComboBox x:Name="IntervalBox" MaxWidth="220" HorizontalAlignment="Left"
+                                  SelectedValuePath="Tag">
+                            <ComboBoxItem Content="每 15 分钟" Tag="15"/>
+                            <ComboBoxItem Content="每小时" Tag="60"/>
+                            <ComboBoxItem Content="每 6 小时" Tag="360"/>
+                            <ComboBoxItem Content="每天" Tag="1440"/>
+                        </ComboBox>
+                        <TextBlock Style="{StaticResource FieldHelp}"
+                                   Text="Vultr 的带宽数据本身是周期性刷新的，并非实时；刷新过于频繁没有意义。SSH + vnstat 的采集频率也会跟随这里的全局设置。"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal"
-                    HorizontalAlignment="Right" Margin="0,12,0,0">
-            <TextBlock x:Name="ConfigPathText" FontSize="11" Foreground="#999"
-                       VerticalAlignment="Center" Margin="0,0,14,0"/>
-            <Button Content="保存并关闭" Padding="16,6" Click="OnSaveClick" IsDefault="True"/>
-        </StackPanel>
+        <Border Grid.Row="1" Grid.ColumnSpan="2" Background="#FFFFFF"
+                BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,1,0,0" Padding="18,10">
+            <DockPanel>
+                <Button Content="保存并关闭" Padding="17,7" DockPanel.Dock="Right"
+                        Style="{StaticResource PrimaryButton}" Click="OnSaveClick" IsDefault="True"/>
+                <TextBlock x:Name="ConfigPathText" FontSize="12" Foreground="#64748B"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>

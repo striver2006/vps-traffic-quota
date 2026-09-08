@@ -43,6 +43,25 @@ public partial class SettingsWindow : Window
         public override string ToString() => Label;
     }
 
+    // MARK: 页面导航
+
+    private void OnShowServersClick(object sender, RoutedEventArgs e)
+    {
+        ServersPage.Visibility = Visibility.Visible;
+        GeneralPage.Visibility = Visibility.Collapsed;
+        ServersNavButton.Style = (Style)FindResource("NavActiveButton");
+        GeneralNavButton.Style = (Style)FindResource("NavButton");
+    }
+
+    private void OnShowGeneralClick(object sender, RoutedEventArgs e)
+    {
+        CommitForm();
+        ServersPage.Visibility = Visibility.Collapsed;
+        GeneralPage.Visibility = Visibility.Visible;
+        ServersNavButton.Style = (Style)FindResource("NavButton");
+        GeneralNavButton.Style = (Style)FindResource("NavActiveButton");
+    }
+
     private void SelectInterval(int minutes)
     {
         foreach (ComboBoxItem item in IntervalBox.Items)
@@ -73,8 +92,9 @@ public partial class SettingsWindow : Window
 
     private sealed record ServerListItem(ServerConfig Server)
     {
-        public override string ToString() =>
-            $"{(string.IsNullOrEmpty(Server.Name) ? "未命名" : Server.Name)}　·　{Server.Provider.DisplayName()}";
+        public string Name => string.IsNullOrEmpty(Server.Name) ? "未命名" : Server.Name;
+        public string ProviderName => Server.Provider.DisplayName();
+        public override string ToString() => $"{Name}　·　{ProviderName}";
     }
 
     // MARK: 表单读写
@@ -92,11 +112,13 @@ public partial class SettingsWindow : Window
         if (_current is null)
         {
             ServerPanel.Visibility = Visibility.Collapsed;
+            EmptyServerPanel.Visibility = Visibility.Visible;
             return;
         }
 
         _loading = true;
         ServerPanel.Visibility = Visibility.Visible;
+        EmptyServerPanel.Visibility = Visibility.Collapsed;
         TestResult.Text = "";
 
         NameBox.Text = _current.Name;
