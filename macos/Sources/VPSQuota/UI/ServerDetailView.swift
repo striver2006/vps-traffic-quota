@@ -2,34 +2,14 @@ import Charts
 import SwiftUI
 import VPSQuotaCore
 
-/// 单台服务器的详情窗口：账期概览 + 每日用量柱状图 + 累计折线。
-struct ServerDetailView: View {
-    let serverId: String
-    @Environment(AppModel.self) private var model
-
-    @State private var history: [DailyUsage] = []
-
-    private var status: ServerStatus? {
-        model.statuses.first { $0.server.id == serverId }
-    }
+/// 单台服务器的详情内容：账期概览 + 每日用量柱状图 + 累计折线。
+///
+/// 独立成一个视图，让「独立详情窗口」和「主窗口右栏」共用同一份实现。
+struct ServerDetailContent: View {
+    let status: ServerStatus
 
     var body: some View {
-        Group {
-            if let status {
-                content(status)
-            } else {
-                ContentUnavailableView(
-                    "找不到这台服务器",
-                    systemImage: "questionmark.folder",
-                    description: Text("它可能已经在设置里被删除了。")
-                )
-            }
-        }
-        .frame(minWidth: 560, minHeight: 420)
-        .navigationTitle(status?.server.name ?? "详情")
-        .task(id: serverId) {
-            history = await model.history(serverId: serverId, days: 60)
-        }
+        content(status)
     }
 
     private func content(_ status: ServerStatus) -> some View {
@@ -196,5 +176,31 @@ struct ServerDetailView: View {
                 .frame(height: 150)
             }
         }
+    }
+}
+
+/// 单台服务器的独立详情窗口 —— 从菜单栏面板点某一行打开。
+struct ServerDetailView: View {
+    let serverId: String
+    @Environment(AppModel.self) private var model
+
+    private var status: ServerStatus? {
+        model.statuses.first { $0.server.id == serverId }
+    }
+
+    var body: some View {
+        Group {
+            if let status {
+                ServerDetailContent(status: status)
+            } else {
+                ContentUnavailableView(
+                    "找不到这台服务器",
+                    systemImage: "questionmark.folder",
+                    description: Text("它可能已经在设置里被删除了。")
+                )
+            }
+        }
+        .frame(minWidth: 560, minHeight: 420)
+        .navigationTitle(status?.server.name ?? "详情")
     }
 }

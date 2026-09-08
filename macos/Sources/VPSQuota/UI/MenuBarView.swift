@@ -78,6 +78,11 @@ struct MenuBarView: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
+            menuButton("打开主窗口", systemImage: "macwindow") {
+                openWindow(id: WindowID.main)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+
             menuButton("立即刷新", systemImage: "arrow.clockwise") {
                 Task { await model.refresh() }
             }

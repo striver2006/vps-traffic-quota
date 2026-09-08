@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "VPSQuota",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     targets: [
         // 纯逻辑 + 采集 + 存储。不含任何 UI，可被单元测试完整覆盖。
         .target(

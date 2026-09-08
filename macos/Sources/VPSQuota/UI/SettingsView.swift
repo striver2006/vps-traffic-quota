@@ -124,6 +124,20 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("显示方式", selection: $model.displayMode) {
+                    ForEach(DisplayMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Text("菜单栏拥挤时（尤其带刘海的机型）macOS 会静默丢弃放不下的状态项，图标就会消失。保留 Dock 图标可以确保任何情况下都能打开主窗口；也可以在终端执行 open -a VPSQuota 唤出。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("呈现方式")
+            }
+
+            Section {
                 LabeledContent("配置文件") {
                     Button(AppPaths.configFile.path) {
                         NSWorkspace.shared.activateFileViewerSelecting([AppPaths.configFile])
