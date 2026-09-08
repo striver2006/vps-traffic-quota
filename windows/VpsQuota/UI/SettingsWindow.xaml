@@ -92,7 +92,7 @@
                         <TextBlock Text="网卡（留空则用 vnstat 的默认网卡）" FontSize="12"/>
                         <TextBox x:Name="InterfaceBox" Padding="4" Margin="0,3,0,3"/>
                         <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,8"
-                                   Text="需要服务器上已安装并启用 vnstat，且本机能免密 SSH 登录（仅支持密钥认证）。详见 docs/setup-dmit.md。"/>
+                                   Text="需要服务器上已安装并启用 vnstat，且本机能免密 SSH 登录（仅支持密钥认证）。详见 github.com/striver2006/vps-traffic-quota 的 docs/setup-dmit.md。"/>
                     </StackPanel>
 
                     <TextBlock Text="月配额（GB，Vultr 填 0 表示自动采用 API 报告的值）" FontSize="12"/>

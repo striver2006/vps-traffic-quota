@@ -23,7 +23,13 @@
       "quotaGB": 1000,
       "meterMode": "sum",
       "resetDay": 10,
-      "unitBase": "binary"
+      "unitBase": "binary",
+
+      "//usageBaseline": "账期中途才开始监控时用它补齐前面的量。periodStart 必须等于当前账期起始日（UTC，YYYY-MM-DD），换账期后自动失效。一般在「设置 → 起始已用量」里填，不必手写。",
+      "usageBaseline": {
+        "periodStart": "2026-09-10",
+        "usedGB": 320.5
+      }
     }
   ]
 }

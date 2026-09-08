@@ -79,7 +79,7 @@ struct ServerEditor: View {
             TextField("用户名", text: optional(\.sshUser))
             TextField("私钥路径", text: optional(\.sshKeyPath), prompt: Text("~/.ssh/id_ed25519"))
             TextField("网卡", text: optional(\.interface), prompt: Text("留空则用 vnstat 的默认网卡"))
-            Text("需要服务器上已安装并启用 vnstat，且本机能免密 SSH 登录（仅支持密钥认证）。详见 docs/setup-dmit.md。")
+            Text("需要服务器上已安装并启用 vnstat，且本机能免密 SSH 登录（仅支持密钥认证）。详见 github.com/striver2006/vps-traffic-quota 的 docs/setup-dmit.md。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
