@@ -3,6 +3,7 @@ namespace VpsQuota.UI;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.Storage;
 
@@ -112,6 +113,14 @@ public partial class SettingsWindow : Window
         InterfaceBox.Text = _current.Interface ?? "";
         QuotaBox.Text = _current.QuotaGB.ToString(CultureInfo.InvariantCulture);
 
+        // 基准绑定到具体账期：只有当前账期与记录的一致时才回填，否则视为已失效。
+        var periodStart = CurrentPeriodStart(_current);
+        BaselineBox.Text = _current.UsageBaseline is { } b && b.PeriodStart == periodStart
+            ? b.UsedGB.ToString(CultureInfo.InvariantCulture)
+            : "0";
+        BaselinePeriodText.Text =
+            $"只对 {periodStart} 起的这个账期有效，下个账期开始后自动清零 —— 否则它会变成凭空多出来的流量。";
+
         MeterBox.SelectedItem = ((List<ChoiceItem<MeterMode>>)MeterBox.ItemsSource)
             .First(i => i.Value == _current.MeterMode);
         UnitBox.SelectedItem = ((List<ChoiceItem<UnitBase>>)UnitBox.ItemsSource)
@@ -141,10 +150,21 @@ public partial class SettingsWindow : Window
             QuotaBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var quota)
             ? Math.Max(0, quota) : 0;
 
+        var baselineGB = double.TryParse(
+            BaselineBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var bl)
+            ? Math.Max(0, bl) : 0;
+        _current.UsageBaseline = baselineGB > 0
+            ? new UsageBaseline { PeriodStart = CurrentPeriodStart(_current), UsedGB = baselineGB }
+            : null;
+
         if (MeterBox.SelectedItem is ChoiceItem<MeterMode> meter) _current.MeterMode = meter.Value;
         if (UnitBox.SelectedItem is ChoiceItem<UnitBase> unit) _current.UnitBase = unit.Value;
         if (ResetDayBox.SelectedItem is ChoiceItem<int> day) _current.ResetDay = day.Value;
     }
+
+    /// <summary>该服务器当前账期的起始日，用于把基准绑定到具体账期。</summary>
+    private static string CurrentPeriodStart(ServerConfig server) =>
+        BillingPeriod.Current(server.ResetDay, DateTime.UtcNow).StartDay;
 
     private static string? Nullify(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

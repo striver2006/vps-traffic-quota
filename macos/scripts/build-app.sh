@@ -22,10 +22,17 @@ echo "==> 编译（${CONFIGURATION}）"
 swift build -c "$CONFIGURATION" --product "$APP_NAME"
 BIN_PATH="$(swift build -c "$CONFIGURATION" --product "$APP_NAME" --show-bin-path)"
 
+echo "==> 生成图标"
+# 图标用代码画（scripts/make-icon.swift），不往仓库里塞二进制资源：
+# 配色可调、可 diff，也不依赖任何设计工具。
+swift "$ROOT/scripts/make-icon.swift" "$ROOT/build"
+iconutil -c icns "$ROOT/build/VPSQuota.iconset" -o "$ROOT/build/VPSQuota.icns"
+
 echo "==> 组装 $APP_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+cp "$ROOT/build/VPSQuota.icns" "$RESOURCES_DIR/VPSQuota.icns"
 
 # SwiftPM 会把资源打成 .bundle 放在 bin 目录下，需要一并搬进 Resources。
 for bundle in "$BIN_PATH"/*.bundle; do
@@ -42,6 +49,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key><string>$APP_NAME</string>
+    <key>CFBundleIconFile</key><string>VPSQuota</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>

@@ -32,6 +32,9 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     public var resetDay: Int
     /// 该服务商的 GB 进制。默认 binary（1024³），首次接入时对照面板校准。
     public var unitBase: UnitBase
+    /// 本账期的「起始已用量」基准，用于补上开始采集之前就已消耗的流量。
+    /// 只对它记录的那个账期生效，换账期后自动失效。
+    public var usageBaseline: UsageBaseline?
 
     // MARK: Vultr 专用
     public var vultrInstanceId: String?
@@ -56,6 +59,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.meterMode = try c.decodeIfPresent(MeterMode.self, forKey: .meterMode) ?? .outbound
         self.resetDay = try c.decodeIfPresent(Int.self, forKey: .resetDay) ?? 1
         self.unitBase = try c.decodeIfPresent(UnitBase.self, forKey: .unitBase) ?? .binary
+        self.usageBaseline = try c.decodeIfPresent(UsageBaseline.self, forKey: .usageBaseline)
         self.vultrInstanceId = try c.decodeIfPresent(String.self, forKey: .vultrInstanceId)
         self.sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
         self.sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort)
@@ -72,6 +76,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         meterMode: MeterMode = .outbound,
         resetDay: Int = 1,
         unitBase: UnitBase = .binary,
+        usageBaseline: UsageBaseline? = nil,
         vultrInstanceId: String? = nil,
         sshHost: String? = nil,
         sshPort: Int? = nil,
@@ -86,6 +91,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.meterMode = meterMode
         self.resetDay = resetDay
         self.unitBase = unitBase
+        self.usageBaseline = usageBaseline
         self.vultrInstanceId = vultrInstanceId
         self.sshHost = sshHost
         self.sshPort = sshPort

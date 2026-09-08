@@ -42,10 +42,11 @@ struct MainWindowView: View {
                 }
             }
         }
-        .task {
-            await model.start()
-            // 默认选中最紧张的那台，打开就直奔重点。
-            if selection == nil {
+        .task { await model.start() }
+        // 默认选中放在这里而不是 .task 里：start() 要等整轮采集跑完才返回，
+        // 那时窗口已经空着显示了好几秒。改成本地数据一到就选中，打开即有内容。
+        .onChange(of: model.statuses.count, initial: true) {
+            if selection == nil, !model.statuses.isEmpty {
                 selection = model.mostCritical?.server.id ?? model.statuses.first?.server.id
             }
         }

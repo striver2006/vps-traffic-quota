@@ -40,7 +40,13 @@ public enum QuotaCalculator {
             .sorted { $0.day < $1.day }
 
         let bytes = billedBytes(days: inPeriod, meterMode: server.meterMode, period: period)
-        let usedGB = Double(bytes) / server.unitBase.bytesPerGB
+        var usedGB = Double(bytes) / server.unitBase.bytesPerGB
+
+        // 补上开始采集之前就已消耗的量。基准绑定账期，换账期后自动失效 ——
+        // 否则这个补偿值会在下个账期变成凭空多出来的流量。
+        if let baseline = server.usageBaseline, baseline.applies(to: period) {
+            usedGB += baseline.usedGB
+        }
 
         // 用户显式填写的配额优先；填 0 时才回退到 API 报告的值。
         let quotaGB = server.quotaGB > 0 ? server.quotaGB : (apiQuotaGB ?? 0)

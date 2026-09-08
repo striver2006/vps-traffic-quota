@@ -49,6 +49,13 @@ public static class QuotaCalculator
         var bytes = BilledBytes(inPeriod, server.MeterMode, period);
         var usedGB = bytes / server.UnitBase.BytesPerGB();
 
+        // 补上开始采集之前就已消耗的量。基准绑定账期，换账期后自动失效 ——
+        // 否则这个补偿值会在下个账期变成凭空多出来的流量。
+        if (server.UsageBaseline is { } baseline && baseline.AppliesTo(period))
+        {
+            usedGB += baseline.UsedGB;
+        }
+
         // 用户显式填写的配额优先；填 0 时才回退到 API 报告的值。
         var quotaGB = server.QuotaGB > 0 ? server.QuotaGB : (apiQuotaGB ?? 0);
 

@@ -105,6 +105,52 @@ struct CrossPlatformConfigTests {
         #expect(config.servers[1].interface == "eth0")
     }
 
+    @Test("起始已用量基准的 JSON 形状与 C# 端一致")
+    func baselineFieldNames() throws {
+        let config = AppConfig(servers: [
+            ServerConfig(id: "b", name: "DMIT", provider: .ssh,
+                         quotaGB: 1000, meterMode: .sum, resetDay: 10,
+                         usageBaseline: UsageBaseline(periodStart: "2026-08-10", usedGB: 320.5)),
+        ])
+        let json = try encode(config)
+        let server = try #require((json["servers"] as? [[String: Any]])?.first)
+
+        let baseline = try #require(server["usageBaseline"] as? [String: Any])
+        // C# 的 JsonNamingPolicy.CamelCase：PeriodStart → periodStart，UsedGB → usedGB
+        #expect(Set(baseline.keys) == ["periodStart", "usedGB"])
+        #expect(baseline["periodStart"] as? String == "2026-08-10")
+        #expect((baseline["usedGB"] as? Double) == 320.5)
+    }
+
+    @Test("没有基准时该字段不出现在 JSON 里，不污染旧配置")
+    func baselineOmittedWhenNil() throws {
+        let config = AppConfig(servers: [
+            ServerConfig(id: "a", name: "东京", provider: .vultr),
+        ])
+        let json = try encode(config)
+        let server = try #require((json["servers"] as? [[String: Any]])?.first)
+        #expect(server["usageBaseline"] == nil)
+    }
+
+    @Test("能读入 Windows 端写出的、带基准的配置")
+    func decodesWindowsBaseline() throws {
+        let json = """
+        {
+          "refreshIntervalMinutes": 60,
+          "servers": [{
+            "id": "dmit-lax", "name": "DMIT", "provider": "ssh",
+            "quotaGB": 1000, "meterMode": "sum", "resetDay": 10, "unitBase": "binary",
+            "sshHost": "1.2.3.4",
+            "usageBaseline": { "periodStart": "2026-08-10", "usedGB": 320.5 }
+          }]
+        }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        let baseline = try #require(config.servers[0].usageBaseline)
+        #expect(baseline.periodStart == "2026-08-10")
+        #expect(baseline.usedGB == 320.5)
+    }
+
     @Test("示例配置文件本身能被解析")
     func exampleConfigIsValid() throws {
         let url = URL(fileURLWithPath: #filePath)

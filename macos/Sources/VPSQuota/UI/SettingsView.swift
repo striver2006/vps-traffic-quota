@@ -5,7 +5,16 @@ import VPSQuotaCore
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var selection: ServerConfig.ID?
+    /// 侧栏的选中项。
+    ///
+    /// 必须用独立的枚举而不是 `String?`：如果「常规设置」用 `nil` 当 tag，
+    /// 它就和「什么都没选」是同一个值，List 无法把它渲染成选中态，点击等于没点。
+    enum Selection: Hashable {
+        case general
+        case server(ServerConfig.ID)
+    }
+
+    @State private var selection: Selection? = .general
     /// 每台服务器的"测试连接"结果。nil 表示没测过，"" 表示成功。
     @State private var testResults: [String: String] = [:]
     @State private var testingId: String?
@@ -13,25 +22,26 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = model
 
-        HSplitView {
+        NavigationSplitView {
             serverList
-                .frame(minWidth: 200, idealWidth: 220)
-
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+        } detail: {
             Group {
-                if let selection, let index = indexOf(selection) {
+                if case .server(let id) = selection, let index = indexOf(id) {
                     ServerEditor(
                         server: $model.config.servers[index],
-                        testResult: testResults[selection],
-                        isTesting: testingId == selection,
+                        testResult: testResults[id],
+                        isTesting: testingId == id,
                         onTest: { runTest(model.config.servers[index]) }
                     )
                 } else {
                     generalSettings
                 }
             }
-            .frame(minWidth: 380, idealWidth: 420)
+            .frame(minWidth: 430)
         }
-        .frame(minHeight: 460)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 700, minHeight: 520)
         .onDisappear { model.saveConfig() }
     }
 
@@ -44,7 +54,7 @@ struct SettingsView: View {
             List(selection: $selection) {
                 Section("通用") {
                     Label("常规设置", systemImage: "gearshape")
-                        .tag(String?.none)
+                        .tag(Selection.general)
                 }
                 Section("服务器") {
                     ForEach(model.config.servers) { server in
@@ -58,7 +68,7 @@ struct SettingsView: View {
                         } icon: {
                             Image(systemName: server.provider == .vultr ? "cloud" : "terminal")
                         }
-                        .tag(Optional(server.id))
+                        .tag(Selection.server(server.id))
                     }
                 }
             }
@@ -82,7 +92,7 @@ struct SettingsView: View {
                     Image(systemName: "minus")
                 }
                 .buttonStyle(.borderless)
-                .disabled(selection == nil)
+                .disabled(!isServerSelected)
 
                 Spacer()
             }
@@ -155,6 +165,11 @@ struct SettingsView: View {
 
     // MARK: -
 
+    private var isServerSelected: Bool {
+        if case .server = selection { return true }
+        return false
+    }
+
     private func indexOf(_ id: String) -> Int? {
         model.config.servers.firstIndex { $0.id == id }
     }
@@ -173,14 +188,14 @@ struct SettingsView: View {
             sshUser: provider == .ssh ? "root" : nil
         )
         model.config.servers.append(server)
-        selection = id
+        selection = .server(id)
     }
 
     private func removeSelected() {
         @Bindable var model = model
-        guard let selection, let index = indexOf(selection) else { return }
+        guard case .server(let id) = selection, let index = indexOf(id) else { return }
         model.config.servers.remove(at: index)
-        self.selection = nil
+        selection = .general
     }
 
     private func runTest(_ server: ServerConfig) {

@@ -144,3 +144,78 @@ struct QuotaCalculatorTests {
         #expect(status.remainingGB == 0)
     }
 }
+
+@Suite("起始已用量基准")
+struct UsageBaselineTests {
+
+    private func utc(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12) -> Date {
+        var c = DateComponents()
+        c.year = y; c.month = m; c.day = d; c.hour = h
+        return UTCDay.calendar.date(from: c)!
+    }
+
+    private let oneGiB: Int64 = 1_073_741_824
+
+    /// 账期 8-10 → 9-10；采集到的只有 9-08 一天，2 GiB 出站。
+    private var days: [DailyUsage] {
+        [DailyUsage(day: "2026-09-08", rxBytes: oneGiB, txBytes: 2 * oneGiB)]
+    }
+
+    private func server(baseline: UsageBaseline?) -> ServerConfig {
+        ServerConfig(id: "s1", name: "DMIT", provider: .ssh,
+                     quotaGB: 1000, meterMode: .outbound, resetDay: 10,
+                     usageBaseline: baseline)
+    }
+
+    @Test("基准所属账期与当前账期一致时被计入")
+    func appliesToMatchingPeriod() {
+        let status = QuotaCalculator.status(
+            server: server(baseline: UsageBaseline(periodStart: "2026-08-10", usedGB: 300)),
+            days: days, now: utc(2026, 9, 8)
+        )
+        #expect(status.period.startDay == "2026-08-10")
+        #expect(abs(status.usedGB - 302) < 0.001)   // 300 基准 + 2 GiB 实测
+    }
+
+    @Test("换到下一个账期后基准自动失效，不会凭空多出流量")
+    func expiresOnNextPeriod() {
+        // 同一份配置，时间推进到 9-10 之后，账期变成 [9-10, 10-10)
+        let status = QuotaCalculator.status(
+            server: server(baseline: UsageBaseline(periodStart: "2026-08-10", usedGB: 300)),
+            days: [DailyUsage(day: "2026-09-12", rxBytes: 0, txBytes: oneGiB)],
+            now: utc(2026, 9, 12)
+        )
+        #expect(status.period.startDay == "2026-09-10")
+        #expect(abs(status.usedGB - 1) < 0.001)   // 只剩实测的 1 GiB，基准已失效
+    }
+
+    @Test("没有基准时行为不变")
+    func noBaseline() {
+        let status = QuotaCalculator.status(
+            server: server(baseline: nil), days: days, now: utc(2026, 9, 8)
+        )
+        #expect(abs(status.usedGB - 2) < 0.001)
+    }
+
+    @Test("基准为 0 视为未设置")
+    func zeroBaselineIsIgnored() {
+        let status = QuotaCalculator.status(
+            server: server(baseline: UsageBaseline(periodStart: "2026-08-10", usedGB: 0)),
+            days: days, now: utc(2026, 9, 8)
+        )
+        #expect(abs(status.usedGB - 2) < 0.001)
+    }
+
+    @Test("基准计入后同样参与超额预测")
+    func baselineFeedsProjection() {
+        // 账期 8-10 起共 31 天，到 9-08 12:00 已过约 29.5 天
+        let status = QuotaCalculator.status(
+            server: server(baseline: UsageBaseline(periodStart: "2026-08-10", usedGB: 900)),
+            days: days, now: utc(2026, 9, 8)
+        )
+        #expect(status.usedGB > 900)
+        #expect(status.severity == .critical)      // 902/1000 > 85%
+        let projected = try! #require(status.projectedGB)
+        #expect(projected > status.usedGB)
+    }
+}

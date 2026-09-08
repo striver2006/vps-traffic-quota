@@ -23,6 +23,8 @@ struct ServerEditor: View {
 
             quotaSection
 
+            baselineSection
+
             Section {
                 HStack {
                     Button(isTesting ? "测试中…" : "测试连接", action: onTest)
@@ -118,6 +120,48 @@ struct ServerEditor: View {
                 .fixedSize(horizontal: false, vertical: true)
         } header: {
             Text("配额")
+        }
+    }
+
+    /// 当前账期的起点，用于把基准绑定到具体账期。
+    private var currentPeriodStart: String {
+        BillingPeriod.current(resetDay: server.resetDay).startDay
+    }
+
+    /// 本账期开始监控之前已经用掉多少（GB）。读写时自动带上当前账期的起始日，
+    /// 这样换账期后旧的补偿值会自动失效。
+    private var baselineBinding: Binding<Double> {
+        Binding(
+            get: {
+                guard let b = server.usageBaseline, b.periodStart == currentPeriodStart else { return 0 }
+                return b.usedGB
+            },
+            set: { newValue in
+                server.usageBaseline = newValue > 0
+                    ? UsageBaseline(periodStart: currentPeriodStart, usedGB: newValue)
+                    : nil
+            }
+        )
+    }
+
+    private var baselineSection: some View {
+        Section {
+            TextField("开始监控前已用（GB）", value: baselineBinding, format: .number)
+            Text("在账期中途才装上 vnstat（或数据库被重建过）时，之前的流量本地没有记录，面板会显示得远低于真实值。从服务商面板抄一个当时的已用量填在这里，就能把缺口补上。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            LabeledContent("生效账期") {
+                Text(currentPeriodStart + " 起")
+                    .foregroundStyle(.secondary)
+            }
+            Text("该补偿值只对上面这个账期有效，下个账期开始后自动清零 —— 否则它会变成凭空多出来的流量。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("起始已用量")
         }
     }
 

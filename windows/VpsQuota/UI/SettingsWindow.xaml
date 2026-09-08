@@ -109,6 +109,12 @@
                     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,10"
                                Text="配额在每月这一天归零。当月没有该日时（例如 31 号遇上 2 月）按当月最后一天处理。计费口径与进制填错会直接导致数字对不上服务商面板，首次配置后请用面板数值校准一次。"/>
 
+                    <TextBlock Text="开始监控前已用（GB）" FontSize="12"/>
+                    <TextBox x:Name="BaselineBox" Padding="4" Margin="0,3,0,3"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#777" Margin="0,0,0,3"
+                               Text="在账期中途才装上 vnstat（或数据库被重建过）时，之前的流量本地没有记录，面板会显示得远低于真实值。从服务商面板抄一个当时的已用量填在这里，就能把缺口补上。"/>
+                    <TextBlock x:Name="BaselinePeriodText" FontSize="11" Foreground="#999" Margin="0,0,0,10"/>
+
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="TestButton" Content="测试连接" Padding="12,5" Click="OnTestClick"/>
                     </StackPanel>
