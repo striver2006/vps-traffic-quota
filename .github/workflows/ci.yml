@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# CI 只读代码，不需要任何写权限
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # PR 上连续 push 时取消旧运行；push 到 main 保留完整记录，
+  # 让每个进入主线的 commit 都有独立可追溯的结果
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  macos:
+    name: macOS · 测试与打包
+    # Package.swift 声明 .macOS(.v15)，构建需要 SDK ≥ 15。
+    # 用 macos-latest 保证 label 一定存在且 SDK 只会更新，不会更旧；
+    # 下面第一步会打印工具链版本，镜像漂移导致的问题一眼可查。
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      # 不能用 sparse-checkout：SchemaConsistencyTests 与 CrossPlatformConfigTests
+      # 通过 #filePath 回溯到仓库根，读取 shared/schema.sql 与 shared/config.example.json
+      - uses: actions/checkout@v4
+
+      - name: 工具链版本（构建失败时先看这一段）
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      # swift test 只编译 VPSQuotaCore 和测试 target，
+      # SwiftUI 应用与 CLI 的编译错误只有这一步抓得到
+      - name: 编译全部 target
+        run: swift build
+
+      - name: 单元测试
+        run: swift test
+
+      - name: 编译（release）
+        run: swift build -c release
+
+      - name: CLI 冒烟（不联网、不读配置）
+        run: swift run -c release vpsquota-cli help
+
+      # 未装 pandoc 时 build-app.sh 会自动退回随包分发原始 Markdown，
+      # 不会失败。装 pandoc 的完整打包留给发布流程
+      - name: 组装 .app
+        run: ./scripts/build-app.sh release
+
+      - name: 校验 bundle
+        run: |
+          test -x build/VPSQuota.app/Contents/MacOS/VPSQuota
+          test -f build/VPSQuota.app/Contents/Resources/VPSQuota.icns
+          plutil -lint build/VPSQuota.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 build/VPSQuota.app
+
+      # 必须先 ditto：upload-artifact 自身的压缩会丢掉可执行位与签名结构，
+      # 直接上传目录会得到一个打不开的 .app
+      - name: 压缩 .app
+        run: ditto -c -k --keepParent build/VPSQuota.app build/VPSQuota.app.zip
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: VPSQuota-macos
+          path: macos/build/VPSQuota.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows · 构建
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      # windows-latest 目前预装 .NET 8，但预装集合会随镜像更新漂移
+      # （.NET 8 于 2026-11 结束支持），显式声明只花十几秒
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: SDK 版本（构建失败时先看这一段）
+        run: dotnet --info
+
+      - name: 还原依赖
+        run: dotnet restore VpsQuota.sln
+
+      # 暂不加 -warnaserror：本工程此前从未在 CI 上编译过，
+      # WPF/WinForms 混用 + nullable enable 很可能有既存告警，
+      # 先让 CI 稳定跑绿，收紧留给单独的 PR
+      - name: 编译（Release）
+        run: dotnet build VpsQuota.sln -c Release --no-restore
+
+      # TODO: 待新增 windows/VpsQuota.Tests 后启用。
+      #       现在不能打开 —— solution 里没有测试工程时 dotnet test 会直接报错。
+      # - name: 单元测试
+      #   run: dotnet test VpsQuota.sln -c Release --no-build
+
+      - name: 发布（框架依赖，需目标机装 .NET 8 Desktop Runtime）
+        run: dotnet publish VpsQuota/VpsQuota.csproj -c Release --no-build -o publish
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: VpsQuota-windows
+          path: windows/publish/
+          if-no-files-found: error
+          retention-days: 14
