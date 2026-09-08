@@ -107,7 +107,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     </array>
     <!-- 菜单栏常驻应用：不在 Dock 显示图标，也不占用程序坞空间 -->
     <key>LSUIElement</key><true/>
-    <key>NSHumanReadableCopyright</key><string></string>
+    <key>NSHumanReadableCopyright</key><string>Copyright © 2026 ChenZhenbo. Licensed under GPL-3.0.</string>
 </dict>
 </plist>
 PLIST

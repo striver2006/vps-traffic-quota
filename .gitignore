@@ -19,6 +19,13 @@ config.json
 usage.sqlite*
 secrets.bin
 
+# ── 凭据（永远不该出现在仓库里）────────────────
+*.pem
+id_rsa*
+id_ed25519*
+
 # ── 系统 ──────────────────────────────────────
 .DS_Store
 Thumbs.db
+.idea/
+*.swp

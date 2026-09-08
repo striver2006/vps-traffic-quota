@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 接入指南与配置说明
+    url: https://github.com/striver2006/vps-traffic-quota/tree/main/docs
+    about: 数字对不上、403、SSH 连不上，多半在 setup-vultr.md / setup-dmit.md / config-reference.md 里有答案
+  - name: 设计与实现说明
+    url: https://github.com/striver2006/vps-traffic-quota/blob/main/docs/architecture.md
+    about: 想改代码或新增服务商，先看这份

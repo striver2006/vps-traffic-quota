@@ -1,5 +1,7 @@
 # VPS 流量配额监控
 
+**简体中文** · [English](README.en.md)
+
 监控 DMIT 与 Vultr 上多台 VPS 的月度流量用量，本地桌面常驻，定时自动采集。
 
 - **macOS** —— 菜单栏常驻，图标直接显示最紧张那台的用量百分比；另有主窗口作为兜底入口
@@ -150,12 +152,12 @@ vnstat 只统计它自己开始记录之后的流量，所以中途接入时本�
 
 ```
 ├── shared/          两端共用的 schema 与配置模板
-├── docs/            接入指南与配置参考
+├── docs/            接入指南、配置参考、架构与需求
 ├── macos/           Swift Package
 │   ├── Sources/VPSQuotaCore/    纯逻辑 + 采集 + 存储（可单测，无 UI 依赖）
 │   ├── Sources/VPSQuota/        菜单栏应用
 │   ├── Sources/vpsquota-cli/    诊断工具
-│   └── Tests/                   38 项单元测试
+│   └── Tests/                   单元测试（无 UI 依赖，可直接 swift test）
 └── windows/         .NET 8 WPF 托盘应用
     └── VpsQuota/    目录结构与 macOS 端同名同职责，便于对照
 ```
@@ -163,3 +165,17 @@ vnstat 只统计它自己开始记录之后的流量，所以中途接入时本�
 macOS 端刻意把逻辑与 UI 拆成两个 target：`VPSQuotaCore` 不引入任何 UI 框架，
 因此账期切分、口径折算、JSON 解析都能直接跑单测，
 CLI 与图形界面也共用同一套刷新逻辑。
+
+参与开发见 [CONTRIBUTING.md](CONTRIBUTING.md)，设计取舍见
+[`docs/architecture.md`](docs/architecture.md)，
+范围与非目标见 [`docs/requirements.md`](docs/requirements.md)。
+
+---
+
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+[GPL-3.0](LICENSE)

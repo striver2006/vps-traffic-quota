@@ -1,0 +1,50 @@
+name: 功能建议 / Feature request
+description: 希望它多做一件事
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提之前建议先看一眼 [`docs/requirements.md`](../blob/main/docs/requirements.md)
+        的「非目标」一节 —— 有些事是刻意不做的（例如自动关机限速、云端同步、告警推送），
+        当然也欢迎带着理由来说服我。
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 你遇到的场景
+      description: 你在做什么、卡在哪。**说场景，先别说方案。**
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你希望它怎么做
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你现在是怎么绕过去的
+      description: 手动查面板？写脚本？还是干脆不管？
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 涉及的端
+      multiple: true
+      options:
+        - macOS
+        - Windows
+        - 两端都要
+        - 与端无关（采集器 / 计算逻辑 / 文档）
+
+  - type: checkboxes
+    id: provider
+    attributes:
+      label: 如果是新增服务商
+      options:
+        - label: 该服务商提供公开 API，或服务器可以 SSH 登录并运行 vnstat
+        - label: 我愿意提供一份脱敏的 API 响应样例
