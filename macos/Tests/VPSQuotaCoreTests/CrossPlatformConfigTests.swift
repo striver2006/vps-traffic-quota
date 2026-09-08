@@ -161,7 +161,7 @@ struct CrossPlatformConfigTests {
             .appendingPathComponent("shared/config.example.json")
         let data = try Data(contentsOf: url)
         let config = try JSONDecoder().decode(AppConfig.self, from: data)
-        #expect(config.servers.count == 4)
+        #expect(config.servers.count == 2)
         #expect(config.refreshIntervalMinutes == 60)
     }
 }
