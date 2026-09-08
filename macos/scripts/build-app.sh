@@ -34,9 +34,46 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT/build/VPSQuota.icns" "$RESOURCES_DIR/VPSQuota.icns"
 
-# 随包带上文档，供「帮助 → 使用说明」打开
-cp "$ROOT/../README.md" "$RESOURCES_DIR/README.md"
-cp -R "$ROOT/../docs" "$RESOURCES_DIR/docs"
+# 随包带上文档，供「帮助 → 使用说明」打开。
+# 有 pandoc 就转成带样式的 HTML（表格、代码块才能正常呈现），
+# 没有则退回原始 Markdown —— 构建不该因为缺一个可选工具就失败。
+DOCS_SRC="$ROOT/.."
+if command -v pandoc >/dev/null 2>&1; then
+    echo "==> 渲染文档（pandoc）"
+    mkdir -p "$RESOURCES_DIR/docs"
+
+    render_doc() {
+        local src="$1" out="$2"
+        # 标题取正文第一个一级标题，没有就用文件名
+        local title
+        title="$(grep -m1 '^# ' "$src" | sed 's/^# //')"
+        [ -n "$title" ] || title="$(basename "$src" .md)"
+
+        pandoc "$src" \
+            --from=gfm \
+            --to=html5 \
+            --standalone \
+            --metadata title="$title" \
+            --include-in-header="$ROOT/scripts/doc-header.html" \
+            --output="$out"
+
+        # 文档之间互相引用的是 .md，包内换成了 .html，链接得跟着改写（保留 #锚点）
+        sed -i '' -E 's/href="([^"]*)\.md(#[^"]*)?"/href="\1.html\2"/g' "$out"
+    }
+
+    render_doc "$DOCS_SRC/README.md" "$RESOURCES_DIR/README.html"
+    for md in "$DOCS_SRC/docs/"*.md; do
+        render_doc "$md" "$RESOURCES_DIR/docs/$(basename "${md%.md}").html"
+    done
+
+    # README 里引用了它，一并带上，链接才不会断
+    mkdir -p "$RESOURCES_DIR/shared"
+    cp "$DOCS_SRC/shared/config.example.json" "$RESOURCES_DIR/shared/"
+else
+    echo "==> 未找到 pandoc，改为随包分发原始 Markdown"
+    cp "$DOCS_SRC/README.md" "$RESOURCES_DIR/README.md"
+    cp -R "$DOCS_SRC/docs" "$RESOURCES_DIR/docs"
+fi
 
 # 声明简体中文本地化：没有这个目录时，macOS 会把 Edit/View/Window 等
 # 标准菜单显示成英文，与中文的应用名对不上。

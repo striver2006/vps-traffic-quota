@@ -47,7 +47,11 @@ struct VPSQuotaApp: App {
             // “Help isn't available for …”。换成两个真正有用的入口。
             CommandGroup(replacing: .help) {
                 Button("使用说明") {
-                    if let url = Bundle.main.url(forResource: "README", withExtension: "md") {
+                    // 打包时若有 pandoc 就渲染成 HTML（表格和代码块才能正常呈现），
+                    // 没有则退回原始 Markdown —— 两种情况都要能打开。
+                    let bundle = Bundle.main
+                    if let url = bundle.url(forResource: "README", withExtension: "html")
+                        ?? bundle.url(forResource: "README", withExtension: "md") {
                         NSWorkspace.shared.open(url)
                     }
                 }
