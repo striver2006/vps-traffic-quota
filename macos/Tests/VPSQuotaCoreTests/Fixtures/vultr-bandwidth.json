@@ -1,0 +1,8 @@
+{
+  "bandwidth": {
+    "2026-08-30": { "incoming_bytes": 1073741824, "outgoing_bytes": 2147483648 },
+    "2026-09-01": { "incoming_bytes": 536870912,  "outgoing_bytes": 1073741824 },
+    "2026-09-02": { "incoming_bytes": 268435456,  "outgoing_bytes": 3221225472 },
+    "2026-09-03": { "incoming_bytes": 0,          "outgoing_bytes": 0 }
+  }
+}

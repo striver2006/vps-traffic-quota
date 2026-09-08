@@ -1,0 +1,24 @@
+# ── macOS / Swift ─────────────────────────────
+macos/.build/
+macos/build/
+macos/.swiftpm/
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# ── Windows / .NET ────────────────────────────
+windows/**/bin/
+windows/**/obj/
+*.user
+.vs/
+
+# ── 运行时数据（绝不入库）──────────────────────
+# 真实配置里有服务器地址和私钥路径；数据库是本机采集结果
+config.json
+usage.sqlite*
+secrets.bin
+
+# ── 系统 ──────────────────────────────────────
+.DS_Store
+Thumbs.db

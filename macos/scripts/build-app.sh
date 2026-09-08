@@ -1,0 +1,65 @@
+#!/bin/bash
+# 把 SwiftPM 产出的可执行文件组装成可双击运行的 .app bundle。
+#
+# 之所以不用 Xcode 工程：SwiftPM 的包描述是纯文本、可 diff、可在命令行完整验证，
+# 而菜单栏应用需要的只是一个正确的 bundle 结构和 Info.plist —— 手工组装完全够用。
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
+
+CONFIGURATION="${1:-release}"
+APP_NAME="VPSQuota"
+DISPLAY_NAME="VPS 流量"
+BUNDLE_ID="io.vpsquota.VPSTrafficQuota"
+VERSION="1.0.0"
+
+APP_DIR="$ROOT/build/$APP_NAME.app"
+MACOS_DIR="$APP_DIR/Contents/MacOS"
+RESOURCES_DIR="$APP_DIR/Contents/Resources"
+
+echo "==> 编译（${CONFIGURATION}）"
+swift build -c "$CONFIGURATION" --product "$APP_NAME"
+BIN_PATH="$(swift build -c "$CONFIGURATION" --product "$APP_NAME" --show-bin-path)"
+
+echo "==> 组装 $APP_DIR"
+rm -rf "$APP_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+
+# SwiftPM 会把资源打成 .bundle 放在 bin 目录下，需要一并搬进 Resources。
+for bundle in "$BIN_PATH"/*.bundle; do
+    [ -e "$bundle" ] || continue
+    cp -R "$bundle" "$RESOURCES_DIR/"
+done
+
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
+    <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+    <key>CFBundleExecutable</key><string>$APP_NAME</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$VERSION</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <!-- 菜单栏常驻应用：不在 Dock 显示图标，也不占用程序坞空间 -->
+    <key>LSUIElement</key><true/>
+    <key>NSHumanReadableCopyright</key><string></string>
+</dict>
+</plist>
+PLIST
+
+echo "==> 临时签名"
+# 本地自用无需开发者证书；ad-hoc 签名足以让 Keychain 访问在重启后保持稳定。
+codesign --force --deep --sign - "$APP_DIR"
+
+echo ""
+echo "✅ 已生成：$APP_DIR"
+echo ""
+echo "运行：      open \"$APP_DIR\""
+echo "安装到应用：cp -R \"$APP_DIR\" /Applications/"
+echo "开机自启：  系统设置 → 通用 → 登录项 → 添加 $APP_NAME.app"

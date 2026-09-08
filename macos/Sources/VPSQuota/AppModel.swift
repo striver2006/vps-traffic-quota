@@ -1,0 +1,130 @@
+import Foundation
+import SwiftUI
+import VPSQuotaCore
+
+/// 界面的唯一状态源。
+///
+/// 把 actor `TrafficMonitor` 的异步接口包装成主线程上的可观察状态，
+/// 同时负责自动刷新的定时器与配置的读写。
+@MainActor
+@Observable
+final class AppModel {
+    /// 各服务器的当前状态，按配置顺序。
+    private(set) var statuses: [ServerStatus] = []
+    private(set) var isRefreshing = false
+    private(set) var lastRefreshAt: Date?
+    /// 启动阶段的致命错误（例如数据库打不开），非 nil 时界面只显示它。
+    private(set) var fatalError: String?
+
+    var config: AppConfig {
+        didSet { Task { await monitor?.updateConfig(config) } }
+    }
+
+    /// 仅用于设置界面回填，不写进配置文件。
+    var vultrAPIKey: String = ""
+
+    private var monitor: TrafficMonitor?
+    private let configStore = ConfigStore()
+    private var refreshTimer: Timer?
+
+    init() {
+        // 配置读不出来时也要能启动，让用户有机会在设置界面里修好它。
+        self.config = (try? configStore.load()) ?? AppConfig()
+        self.vultrAPIKey = (try? KeychainStore.vultrAPIKey()) ?? ""
+
+        do {
+            let store = try SQLiteStore(path: AppPaths.databaseFile)
+            self.monitor = TrafficMonitor(
+                store: store, config: config, vultrAPIKey: vultrAPIKey
+            )
+        } catch {
+            self.fatalError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    /// 启动流程：先用本地数据把界面填满，再在后台发起真正的采集。
+    /// 这样即使网络或 SSH 很慢，打开菜单也能立刻看到上次的数据。
+    func start() async {
+        guard let monitor else { return }
+        statuses = await monitor.statuses()
+        scheduleTimer()
+        await refresh()
+    }
+
+    func refresh() async {
+        guard let monitor, !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        statuses = await monitor.refreshAll()
+        lastRefreshAt = Date()
+    }
+
+    /// 重新按本地数据折算一遍。跨过账期重置日时需要它把界面切到新账期。
+    func recomputeFromLocal() async {
+        guard let monitor else { return }
+        statuses = await monitor.statuses()
+    }
+
+    // MARK: - 配置
+
+    func saveConfig() {
+        do {
+            try configStore.save(config)
+            try KeychainStore.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+        } catch {
+            fatalError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return
+        }
+        Task {
+            await monitor?.updateConfig(config)
+            await monitor?.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+            scheduleTimer()
+            await refresh()
+        }
+    }
+
+    /// 测试单台服务器的采集。返回 nil 表示成功。
+    func testServer(_ server: ServerConfig) async -> String? {
+        guard let monitor else { return "数据库未就绪" }
+        // 测试用的是当前编辑中的凭据，先同步过去，否则测的还是旧 Key。
+        await monitor.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+        let error = await monitor.refreshOne(server: server)
+        statuses = await monitor.statuses()
+        return error
+    }
+
+    func history(serverId: String, days: Int) async -> [DailyUsage] {
+        guard let monitor else { return [] }
+        return await monitor.history(serverId: serverId, days: days)
+    }
+
+    // MARK: - 定时刷新
+
+    private func scheduleTimer() {
+        refreshTimer?.invalidate()
+        let minutes = max(5, config.refreshIntervalMinutes)
+        let timer = Timer(timeInterval: Double(minutes) * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refresh() }
+        }
+        // 采集本来就是低频的，给一分钟容差让系统合并唤醒，省电。
+        timer.tolerance = 60
+        // 显式加进 .common 模式：默认模式下，菜单打开时定时器会被 tracking run loop 挡住。
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
+    }
+
+    // MARK: - 汇总
+
+    /// 状态栏标题要显示的那台 —— 用量比例最高的一台。
+    var mostCritical: ServerStatus? {
+        statuses
+            .filter { $0.usedFraction != nil }
+            .max { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
+    }
+
+    var hasAnyError: Bool {
+        statuses.contains { $0.lastError != nil }
+    }
+}

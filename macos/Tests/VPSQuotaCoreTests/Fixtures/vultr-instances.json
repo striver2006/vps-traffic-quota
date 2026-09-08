@@ -1,0 +1,24 @@
+{
+  "instances": [
+    {
+      "id": "cb676a46-66fd-4dfb-b839-443f2e6c0b60",
+      "os": "Ubuntu 24.04 LTS x64",
+      "ram": 1024,
+      "disk": 25,
+      "main_ip": "192.0.2.10",
+      "region": "nrt",
+      "allowed_bandwidth": 1000,
+      "label": "tokyo-node",
+      "status": "active"
+    },
+    {
+      "id": "8f3a1c22-1111-2222-3333-444455556666",
+      "main_ip": "198.51.100.20",
+      "region": "lax",
+      "allowed_bandwidth": 2000,
+      "label": "la-node",
+      "status": "active"
+    }
+  ],
+  "meta": { "total": 2, "links": { "next": "", "prev": "" } }
+}

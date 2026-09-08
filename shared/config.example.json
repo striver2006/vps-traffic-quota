@@ -1,0 +1,49 @@
+{
+  "refreshIntervalMinutes": 60,
+  "servers": [
+    {
+      "id": "vultr-tokyo",
+      "name": "Vultr 东京",
+      "provider": "vultr",
+      "vultrInstanceId": "把 Vultr 实例 UUID 填在这里",
+      "quotaGB": 0,
+      "meterMode": "outbound",
+      "resetDay": 1
+    },
+    {
+      "id": "vultr-la",
+      "name": "Vultr 洛杉矶",
+      "provider": "vultr",
+      "vultrInstanceId": "把 Vultr 实例 UUID 填在这里",
+      "quotaGB": 0,
+      "meterMode": "outbound",
+      "resetDay": 1
+    },
+    {
+      "id": "dmit-lax",
+      "name": "DMIT 洛杉矶",
+      "provider": "ssh",
+      "sshHost": "1.2.3.4",
+      "sshPort": 22,
+      "sshUser": "root",
+      "sshKeyPath": "~/.ssh/id_ed25519",
+      "interface": "eth0",
+      "quotaGB": 1000,
+      "meterMode": "sum",
+      "resetDay": 15
+    },
+    {
+      "id": "dmit-hkg",
+      "name": "DMIT 香港",
+      "provider": "ssh",
+      "sshHost": "5.6.7.8",
+      "sshPort": 22,
+      "sshUser": "root",
+      "sshKeyPath": "~/.ssh/id_ed25519",
+      "interface": "eth0",
+      "quotaGB": 500,
+      "meterMode": "sum",
+      "resetDay": 15
+    }
+  ]
+}
