@@ -1,5 +1,7 @@
 namespace VpsQuota.Storage;
 
+using System.IO;
+
 /// <summary>
 /// 应用数据目录。
 ///

@@ -4,6 +4,10 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
+    <!-- 注意：UseWPF 的 XamlPreCompile 会生成一个临时项目（VpsQuota_*_wpftmp.csproj），
+         它不继承 ImplicitUsings，隐式 global using 在那一轮编译里全部失效。
+         所以 System.IO、System.Net.Http 这类命名空间必须在用到的文件里显式 using，
+         否则本机 IDE 不报错、CI 上却会 CS0103/CS0246。 -->
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <UseWPF>true</UseWPF>
