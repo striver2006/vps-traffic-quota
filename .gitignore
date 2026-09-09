@@ -30,4 +30,7 @@ id_ed25519*
 .DS_Store
 Thumbs.db
 .idea/
+# VS Code 的 launch.json 由 Swift 扩展按 Package.swift 的 target 自动生成，
+# 装了扩展的人打开项目就会有，入库只会多一份要跟着 target 维护的文件
+.vscode/
 *.swp
