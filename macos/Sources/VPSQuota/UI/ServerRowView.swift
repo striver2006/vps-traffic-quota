@@ -4,6 +4,8 @@ import VPSQuotaCore
 /// 菜单里的单台服务器。
 struct ServerRowView: View {
     let status: ServerStatus
+    /// 菜单栏那块数字说的就是这一台。只在浮动面板里标出来。
+    var isPinnedToMenuBar: Bool = false
     let onSelect: () -> Void
 
     private var quotaText: String {
@@ -14,6 +16,12 @@ struct ServerRowView: View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline) {
+                    if isPinnedToMenuBar {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .help("菜单栏显示的就是这一台")
+                    }
                     Text(status.server.name)
                         .font(.system(size: 13, weight: .medium))
                     if status.lastError != nil {
@@ -39,6 +47,10 @@ struct ServerRowView: View {
 
                 HStack(spacing: 4) {
                     Text("\(ByteFormat.gb(status.usedGB)) / \(quotaText)")
+                    if let remaining = status.remainingGB {
+                        Text("·")
+                        Text("剩余 \(ByteFormat.gb(remaining))")
+                    }
                     Text("·")
                     Text("剩 \(status.remainingDays) 天")
                     if status.willExceed {

@@ -151,6 +151,31 @@ struct CrossPlatformConfigTests {
         #expect(baseline.usedGB == 320.5)
     }
 
+    @Test("菜单栏指定的服务器随配置一起走，且没指定时不写进 JSON")
+    func menuBarServerIdRoundTrips() throws {
+        let bare = AppConfig(servers: [ServerConfig(id: "a", name: "东京", provider: .vultr)])
+        #expect(try encode(bare)["menuBarServerId"] == nil)
+
+        let pinned = AppConfig(
+            refreshIntervalMinutes: 60,
+            servers: [ServerConfig(id: "a", name: "东京", provider: .vultr)],
+            menuBarServerId: "a"
+        )
+        // C# 端的 JsonNamingPolicy.CamelCase：MenuBarServerId → menuBarServerId
+        #expect(try encode(pinned)["menuBarServerId"] as? String == "a")
+
+        // C# 端不会省略 null，读到 null 要当作"没指定"而不是解码失败。
+        let json = """
+        {
+          "refreshIntervalMinutes": 60,
+          "menuBarServerId": null,
+          "servers": [{ "id": "a", "name": "东京", "provider": "vultr" }]
+        }
+        """
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        #expect(decoded.menuBarServerId == nil)
+    }
+
     @Test("示例配置文件本身能被解析")
     func exampleConfigIsValid() throws {
         let url = URL(fileURLWithPath: #filePath)

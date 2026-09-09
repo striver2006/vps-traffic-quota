@@ -163,11 +163,31 @@ final class AppModel {
 
     // MARK: - 汇总
 
-    /// 状态栏标题要显示的那台 —— 用量比例最高的一台。
+    /// 用量比例最高的一台。
     var mostCritical: ServerStatus? {
         statuses
             .filter { $0.usedFraction != nil }
             .max { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
+    }
+
+    /// 菜单栏那一小块要反映的那台。
+    ///
+    /// 优先用设置里指定的服务器；没指定、或指定的那台已经被删掉时，
+    /// 回退到用量最紧张的一台 —— 这也是加这个设置之前的行为。
+    var menuBarStatus: ServerStatus? {
+        if let id = config.menuBarServerId,
+           let pinned = statuses.first(where: { $0.server.id == id }) {
+            return pinned
+        }
+        return mostCritical ?? statuses.first
+    }
+
+    /// 菜单栏图标旁边的文字：所选服务器本账期还剩多少流量。
+    /// 配额未知时没有"剩余"可言，用短横占位而不是退回百分比。
+    var menuBarTitle: String? {
+        guard let status = menuBarStatus else { return nil }
+        guard let remaining = status.remainingGB else { return "—" }
+        return ByteFormat.gb(remaining)
     }
 
     var hasAnyError: Bool {

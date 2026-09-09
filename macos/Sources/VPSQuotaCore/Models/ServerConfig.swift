@@ -107,9 +107,21 @@ public struct AppConfig: Codable, Sendable {
     public var refreshIntervalMinutes: Int
     public var servers: [ServerConfig]
 
-    public init(refreshIntervalMinutes: Int = 60, servers: [ServerConfig] = []) {
+    /// 常驻区（macOS 菜单栏 / Windows 托盘）要显示剩余流量的那台服务器。
+    ///
+    /// 放进共享配置而不是各端的本地偏好：两端的常驻区都只有一个位置，
+    /// 该显示哪台是同一个决策，配置文件互拷时理应一起带过去。
+    /// 为 nil、或指向一台已被删除的服务器时，回退到用量比例最高的那台。
+    public var menuBarServerId: String?
+
+    public init(
+        refreshIntervalMinutes: Int = 60,
+        servers: [ServerConfig] = [],
+        menuBarServerId: String? = nil
+    ) {
         self.refreshIntervalMinutes = refreshIntervalMinutes
         self.servers = servers
+        self.menuBarServerId = menuBarServerId
     }
 
     /// 旧配置文件缺字段时的兜底，避免一次手改 JSON 就整个读不出来。
@@ -118,5 +130,6 @@ public struct AppConfig: Codable, Sendable {
         self.refreshIntervalMinutes =
             try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 60
         self.servers = try c.decodeIfPresent([ServerConfig].self, forKey: .servers) ?? []
+        self.menuBarServerId = try c.decodeIfPresent(String.self, forKey: .menuBarServerId)
     }
 }

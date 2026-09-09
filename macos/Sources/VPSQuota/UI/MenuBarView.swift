@@ -1,8 +1,12 @@
 import SwiftUI
 import VPSQuotaCore
 
-/// 点击状态栏图标后弹出的主面板。
+/// 鼠标移到状态栏图标上（或点击它）时浮出的主面板。
 struct MenuBarView: View {
+    /// 关掉浮动面板。由 `StatusItemController` 注入 ——
+    /// 面板不再是 SwiftUI 的 MenuBarExtra，点了里面的按钮不会自动收起。
+    var dismiss: () -> Void = {}
+
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
@@ -18,8 +22,13 @@ struct MenuBarView: View {
                 emptyState
             } else {
                 ForEach(model.statuses) { status in
-                    ServerRowView(status: status) {
+                    ServerRowView(
+                        status: status,
+                        isPinnedToMenuBar: status.server.id == model.menuBarStatus?.server.id
+                    ) {
+                        dismiss()
                         openWindow(id: WindowID.detail, value: status.server.id)
+                        NSApp.activate(ignoringOtherApps: true)
                     }
                 }
             }
@@ -79,6 +88,7 @@ struct MenuBarView: View {
     private var footer: some View {
         VStack(spacing: 0) {
             menuButton("打开主窗口", systemImage: "macwindow") {
+                dismiss()
                 openWindow(id: WindowID.main)
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -89,6 +99,7 @@ struct MenuBarView: View {
             .disabled(model.isRefreshing)
 
             menuButton("设置…", systemImage: "gearshape") {
+                dismiss()
                 openWindow(id: WindowID.settings)
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -116,32 +127,5 @@ struct MenuBarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// 状态栏上那一小块内容：图标 + 最紧张那台的百分比。
-struct MenuBarLabel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: iconName)
-            if let status = model.mostCritical, let fraction = status.usedFraction {
-                Text(ByteFormat.percent(fraction))
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-            }
-        }
-    }
-
-    /// 图标随最紧张那台的严重程度变化，不展开菜单也能察觉异常。
-    private var iconName: String {
-        if model.fatalError != nil || model.hasAnyError {
-            return "exclamationmark.triangle"
-        }
-        switch model.mostCritical?.severity {
-        case .critical: return "chart.bar.fill"
-        case .warning: return "chart.bar"
-        default: return "chart.bar"
-        }
     }
 }

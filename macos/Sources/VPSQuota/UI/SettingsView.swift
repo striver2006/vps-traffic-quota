@@ -148,6 +148,22 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("显示服务器", selection: $model.config.menuBarServerId) {
+                    Text("自动（用量最紧张的一台）").tag(String?.none)
+                    ForEach(model.config.servers) { server in
+                        Text(server.name.isEmpty ? "未命名" : server.name)
+                            .tag(String?.some(server.id))
+                    }
+                }
+                Text("菜单栏图标旁只显示这一台本账期还剩多少流量。这台服务器没设配额时无从算起，会显示一道短横。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("菜单栏")
+            }
+
+            Section {
                 LabeledContent("配置文件") {
                     Button(AppPaths.configFile.path) {
                         NSWorkspace.shared.activateFileViewerSelecting([AppPaths.configFile])
@@ -195,6 +211,9 @@ struct SettingsView: View {
         @Bindable var model = model
         guard case .server(let id) = selection, let index = indexOf(id) else { return }
         model.config.servers.remove(at: index)
+        // 删掉的正好是菜单栏在显示的那台时把指向清掉，
+        // 否则配置里会留下一个悬空 ID，看不出菜单栏为什么换了一台。
+        if model.config.menuBarServerId == id { model.config.menuBarServerId = nil }
         selection = .general
     }
 

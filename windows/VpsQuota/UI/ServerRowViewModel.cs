@@ -24,6 +24,16 @@ public sealed class ServerRowViewModel
     public string PercentText =>
         Status.UsedFraction is { } f ? ByteFormat.Percent(f) : "";
 
+    /// <summary>本账期还剩多少可用。配额未知时无从算起。</summary>
+    public string RemainingText =>
+        Status.RemainingGB is { } r ? $"剩余 {ByteFormat.GB(r)}" : "配额未知";
+
+    /// <summary>这一台就是托盘图标当前反映的那台。</summary>
+    public bool IsPinnedToTray { get; init; }
+
+    public Visibility PinnedVisibility =>
+        IsPinnedToTray ? Visibility.Visible : Visibility.Collapsed;
+
     public string UsageText
     {
         get

@@ -227,6 +227,17 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="托盘显示" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="显示哪台服务器" Style="{StaticResource FieldLabel}" Margin="0,12,0,4"/>
+                        <ComboBox x:Name="MenuBarServerBox" MaxWidth="300" HorizontalAlignment="Left"/>
+                        <TextBlock Style="{StaticResource FieldHelp}"
+                                   Text="托盘图标的颜色、以及右键菜单首行的「剩余 xx GB」都只反映这一台。选「自动」则跟着用量最紧张的那台走。这台服务器没设配额时无从算起，会显示为「配额未知」。悬停浮窗里仍然列出全部服务器。"/>
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="自动刷新" FontSize="14" FontWeight="SemiBold"

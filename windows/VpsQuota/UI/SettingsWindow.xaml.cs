@@ -35,6 +35,7 @@ public partial class SettingsWindow : Window
 
         SelectInterval(_state.Config.RefreshIntervalMinutes);
         ReloadServerList();
+        ReloadMenuBarChoices();
     }
 
     /// <summary>下拉项：一个值配一段中文说明。</summary>
@@ -42,6 +43,33 @@ public partial class SettingsWindow : Window
     {
         public override string ToString() => Label;
     }
+
+    /// <summary>「托盘显示哪台」的下拉项。Id 为 null 表示自动挑用量最紧张的那台。</summary>
+    private sealed record MenuBarChoice(string? Id, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>按当前的服务器列表重建「托盘显示哪台」的选项，保留原有选择。</summary>
+    private void ReloadMenuBarChoices()
+    {
+        // 第一次填充时下拉里还什么都没有，选择只能从配置取；
+        // 之后要以界面上的当前选择为准，否则用户改成「自动」再加一台会被弹回去。
+        var current = MenuBarServerBox.ItemsSource is null
+            ? _state.Config.MenuBarServerId
+            : (MenuBarServerBox.SelectedItem as MenuBarChoice)?.Id;
+
+        var choices = new List<MenuBarChoice> { new(null, "自动（用量最紧张的一台）") };
+        choices.AddRange(_state.Config.Servers.Select(s =>
+            new MenuBarChoice(s.Id, string.IsNullOrEmpty(s.Name) ? "未命名" : s.Name)));
+
+        MenuBarServerBox.ItemsSource = choices;
+        MenuBarServerBox.SelectedItem =
+            choices.FirstOrDefault(c => c.Id == current) ?? choices[0];
+    }
+
+    private string? SelectedMenuBarServerId() =>
+        (MenuBarServerBox.SelectedItem as MenuBarChoice)?.Id;
 
     // MARK: 页面导航
 
@@ -56,6 +84,8 @@ public partial class SettingsWindow : Window
     private void OnShowGeneralClick(object sender, RoutedEventArgs e)
     {
         CommitForm();
+        // 名称可能刚在服务器页改过，切过来之前把下拉里的标签同步一遍。
+        ReloadMenuBarChoices();
         ServersPage.Visibility = Visibility.Collapsed;
         GeneralPage.Visibility = Visibility.Visible;
         ServersNavButton.Style = (Style)FindResource("NavButton");
@@ -216,6 +246,7 @@ public partial class SettingsWindow : Window
         _state.Config.Servers.Add(server);
         _current = server;
         ReloadServerList();
+        ReloadMenuBarChoices();
         ServerList.SelectedItem = ((List<ServerListItem>)ServerList.ItemsSource)
             .First(i => i.Server.Id == server.Id);
     }
@@ -230,8 +261,12 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _state.Config.Servers.RemoveAll(s => s.Id == _current.Id);
+        // 删掉的正好是托盘在显示的那台时把指向清掉，
+        // 否则配置里会留下一个悬空 ID，看不出托盘为什么换了一台。
+        if (_state.Config.MenuBarServerId == _current.Id) _state.Config.MenuBarServerId = null;
         _current = null;
         ReloadServerList();
+        ReloadMenuBarChoices();
         LoadForm();
     }
 
@@ -242,6 +277,7 @@ public partial class SettingsWindow : Window
         CommitForm();
         _state.VultrApiKey = ApiKeyBox.Password;
         _state.Config.RefreshIntervalMinutes = SelectedInterval();
+        _state.Config.MenuBarServerId = SelectedMenuBarServerId();
         // 测试前先落盘，否则测的是编辑前的旧值。
         _state.SaveConfig();
 
@@ -269,6 +305,7 @@ public partial class SettingsWindow : Window
         CommitForm();
         _state.VultrApiKey = ApiKeyBox.Password;
         _state.Config.RefreshIntervalMinutes = SelectedInterval();
+        _state.Config.MenuBarServerId = SelectedMenuBarServerId();
         _state.SaveConfig();
         Close();
     }

@@ -2,18 +2,34 @@ namespace VpsQuota;
 
 using System.Drawing;
 using System.Windows;
+using System.Windows.Threading;
 using VpsQuota.Models;
 using VpsQuota.UI;
 using Forms = System.Windows.Forms;
 
 /// <summary>
-/// 托盘常驻应用入口。对应 macOS 端的 MenuBarExtra。
+/// 托盘常驻应用入口。对应 macOS 端的菜单栏状态项。
 /// </summary>
 public partial class App : Application
 {
     private AppState? _state;
     private Forms.NotifyIcon? _tray;
     private Icon? _currentIcon;
+
+    /// <summary>悬停时浮出的面板。取代了系统 tooltip，一直复用同一个实例。</summary>
+    private TrayPopupWindow? _popup;
+
+    /// <summary>最后一次收到托盘图标 MouseMove 的时刻，用来判断鼠标是否已经离开图标。</summary>
+    private DateTime _lastTrayHoverAt;
+
+    /// <summary>面板的收起判定。托盘图标没有"鼠标移出"事件，只能轮询。</summary>
+    private readonly DispatcherTimer _hoverTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(250),
+    };
+
+    /// <summary>右键菜单顶部那行只读摘要：所选服务器的剩余流量。</summary>
+    private Forms.ToolStripMenuItem? _summaryItem;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -37,29 +53,88 @@ public partial class App : Application
 
     private void SetupTray()
     {
+        // 首行是只读摘要，把"剩余多少 GB"直接摆在菜单上，不用先展开面板。
+        _summaryItem = new Forms.ToolStripMenuItem("VPS 流量") { Enabled = false };
+
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("显示面板", null, (_, _) => _state?.ShowMain());
+        menu.Items.Add(_summaryItem);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("显示面板", null, (_, _) => ShowMainWindow());
         menu.Items.Add("立即刷新", null, async (_, _) =>
         {
             if (_state is not null) await _state.RefreshAsync();
         });
-        menu.Items.Add("设置…", null, (_, _) => _state?.ShowSettings());
+        menu.Items.Add("设置…", null, (_, _) => { HidePopup(); _state?.ShowSettings(); });
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Shutdown());
 
         _tray = new Forms.NotifyIcon
         {
             Visible = true,
-            Text = "VPS 流量",
+            // 刻意留空：Text 就是系统 tooltip，而这里改用自己的浮动面板，
+            // 两个一起弹会互相盖住。
+            Text = "",
             ContextMenuStrip = menu,
         };
-        // 单击（而非右键）直接打开面板，和 macOS 端点菜单栏图标的手感一致。
+        // 单击（而非右键）直接打开主窗口，和 macOS 端点菜单栏图标的手感一致。
         _tray.MouseClick += (_, args) =>
         {
-            if (args.Button == Forms.MouseButtons.Left) _state?.ShowMain();
+            if (args.Button == Forms.MouseButtons.Left) ShowMainWindow();
+        };
+        // 托盘图标只有 MouseMove，没有 MouseEnter/Leave：
+        // 进入靠它触发，离开靠 _hoverTimer 发现"一段时间没再收到 MouseMove"。
+        _tray.MouseMove += (_, _) =>
+        {
+            _lastTrayHoverAt = DateTime.UtcNow;
+            ShowPopup();
         };
 
+        _hoverTimer.Tick += (_, _) => HidePopupIfPointerAway();
+
         UpdateTray();
+    }
+
+    // MARK: 悬停面板
+
+    private void ShowPopup()
+    {
+        if (_state is null) return;
+
+        if (_popup is null)
+        {
+            _popup = new TrayPopupWindow(_state);
+            // 面板被关掉（而不是隐藏）之后就不能再 Show 了，置空好让下次重建。
+            _popup.Closed += (_, _) => _popup = null;
+        }
+        if (!_popup.IsVisible) _popup.ShowNearTray();
+        _hoverTimer.Start();
+    }
+
+    private void HidePopupIfPointerAway()
+    {
+        if (_popup is null || !_popup.IsVisible)
+        {
+            _hoverTimer.Stop();
+            return;
+        }
+        // 鼠标已经移进面板里了 —— 用户正要点按钮，不能收。
+        if (_popup.IsMouseOver) return;
+        // 还在图标上（MouseMove 仍在源源不断地来）也不收。
+        if ((DateTime.UtcNow - _lastTrayHoverAt).TotalMilliseconds < 500) return;
+
+        HidePopup();
+    }
+
+    private void HidePopup()
+    {
+        _hoverTimer.Stop();
+        _popup?.Hide();
+    }
+
+    private void ShowMainWindow()
+    {
+        HidePopup();
+        _state?.ShowMain();
     }
 
     private void UpdateTray()
@@ -68,7 +143,8 @@ public partial class App : Application
 
         Dispatcher.Invoke(() =>
         {
-            var status = _state.MostCritical;
+            // 图标跟着"设置里指定要显示的那台"走，和菜单上的数字说的是同一台。
+            var status = _state.MenuBarStatus;
             var severity = _state.HasAnyError || _state.FatalError is not null
                 ? Severity.Unknown
                 : status?.Severity ?? Severity.Unknown;
@@ -80,10 +156,17 @@ public partial class App : Application
             // GetHicon 分配的是非托管句柄，换掉之后必须显式销毁，否则每次刷新都漏一个。
             previous?.Dispose();
 
-            _tray.Text = status is null
-                ? "VPS 流量 —— 尚无数据"
-                : $"{status.Server.Name}　{Core.ByteFormat.GB(status.UsedGB)}" +
-                  (status.QuotaGB > 0 ? $" / {Core.ByteFormat.GB(status.QuotaGB)}" : "");
+            if (_summaryItem is not null)
+            {
+                // ToolStrip 会把 & 当成助记符前缀吃掉，服务器名里若有它得先转义。
+                var name = status?.Server.Name.Replace("&", "&&") ?? "";
+                _summaryItem.Text = status is null
+                    ? "尚无数据"
+                    : status.RemainingGB is { } remaining
+                        ? $"{name}　剩余 {Core.ByteFormat.GB(remaining)}"
+                          + $" / {Core.ByteFormat.GB(status.QuotaGB)}"
+                        : $"{name}　已用 {Core.ByteFormat.GB(status.UsedGB)}　配额未知";
+            }
         });
     }
 
@@ -139,6 +222,9 @@ public partial class App : Application
 
     protected override async void OnExit(ExitEventArgs e)
     {
+        _hoverTimer.Stop();
+        _popup?.Close();
+
         if (_tray is not null)
         {
             // 不显式隐藏的话，退出后托盘里会留下一个要鼠标划过才消失的幽灵图标。

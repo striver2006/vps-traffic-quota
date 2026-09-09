@@ -2,6 +2,7 @@ namespace VpsQuota.UI;
 
 using System.Windows;
 using System.Windows.Threading;
+using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.Scheduler;
 using VpsQuota.Storage;
@@ -164,11 +165,41 @@ public sealed class AppState
         window.Activate();
     }
 
-    /// <summary>托盘图标要反映的那台 —— 用量比例最高的一台。</summary>
+    /// <summary>用量比例最高的一台。</summary>
     public ServerStatus? MostCritical => Statuses
         .Where(s => s.UsedFraction is not null)
         .OrderByDescending(s => s.UsedFraction)
         .FirstOrDefault();
+
+    /// <summary>
+    /// 托盘要反映的那台。优先用设置里指定的服务器；没指定、或指定的那台已经被删掉时，
+    /// 回退到用量最紧张的一台 —— 这也是加这个设置之前的行为。
+    /// </summary>
+    public ServerStatus? MenuBarStatus
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(Config.MenuBarServerId))
+            {
+                var pinned = Statuses.FirstOrDefault(s => s.Server.Id == Config.MenuBarServerId);
+                if (pinned is not null) return pinned;
+            }
+            return MostCritical ?? Statuses.FirstOrDefault();
+        }
+    }
+
+    /// <summary>
+    /// 托盘图标上要画的文字：所选服务器本账期还剩多少流量。
+    /// 配额未知时没有"剩余"可言，用短横占位而不是退回百分比。
+    /// </summary>
+    public string? MenuBarTitle
+    {
+        get
+        {
+            if (MenuBarStatus is not { } status) return null;
+            return status.RemainingGB is { } remaining ? ByteFormat.GB(remaining) : "—";
+        }
+    }
 
     public bool HasAnyError => Statuses.Any(s => s.LastError is not null);
 

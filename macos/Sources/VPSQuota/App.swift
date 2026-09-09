@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 由 `VPSQuotaApp` 在启动时注入，用于打开主窗口。
     var openMainWindow: (() -> Void)?
 
+    /// 菜单栏常驻项。必须由这里强引用着，否则状态项会随控制器一起被释放。
+    var statusItem: StatusItemController?
+
     func applicationShouldHandleReopen(
         _ sender: NSApplication, hasVisibleWindows: Bool
     ) -> Bool {
@@ -61,19 +64,8 @@ struct VPSQuotaApp: App {
             }
         }
 
-        // isInserted 让用户能彻底关掉菜单栏项（选「仅 Dock」时）。
-        MenuBarExtra(isInserted: Binding(
-            get: { model.displayMode.showsMenuBarItem },
-            set: { _ in }   // 只受设置驱动，不允许从别处改
-        )) {
-            MenuBarView()
-                .environment(model)
-        } label: {
-            MenuBarLabel()
-                .environment(model)
-        }
-        // .window 而非默认的 .menu：需要在弹出面板里放进度条、图表这类自定义视图。
-        .menuBarExtraStyle(.window)
+        // 菜单栏项不在这里声明：它需要响应鼠标悬停，而 MenuBarExtra 只认点击。
+        // 见 StatusItemController —— 由 bootstrap() 装上。
 
         Window("设置", id: WindowID.settings) {
             SettingsView()
@@ -93,7 +85,7 @@ struct VPSQuotaApp: App {
         .windowResizability(.contentSize)
     }
 
-    /// 主窗口首次出现时接好 Dock / `open -a` 的重新打开路径，并应用呈现方式。
+    /// 主窗口首次出现时接好 Dock / `open -a` 的重新打开路径，装上菜单栏项，并应用呈现方式。
     private func bootstrap() {
         model.applyActivationPolicy()
 
@@ -101,6 +93,12 @@ struct VPSQuotaApp: App {
         appDelegate.openMainWindow = {
             open(id: WindowID.main)
             NSApp.activate(ignoringOtherApps: true)
+        }
+
+        // 主窗口在启动时一定会被创建（设置窗口才是 suppressed 的），
+        // 所以这里也是唯一一处保证会执行到的装配点。
+        if appDelegate.statusItem == nil {
+            appDelegate.statusItem = StatusItemController(model: model)
         }
     }
 }

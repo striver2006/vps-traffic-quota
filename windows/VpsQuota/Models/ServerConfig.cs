@@ -61,6 +61,16 @@ public sealed class AppConfig
     public int RefreshIntervalMinutes { get; set; } = 60;
 
     public List<ServerConfig> Servers { get; set; } = new();
+
+    /// <summary>
+    /// 常驻区（Windows 托盘 / macOS 菜单栏）要显示剩余流量的那台服务器。
+    /// </summary>
+    /// <remarks>
+    /// 放进共享配置而不是各端的本地偏好：两端的常驻区都只有一个位置，
+    /// 该显示哪台是同一个决策，配置文件互拷时理应一起带过去。
+    /// 为 null、或指向一台已被删除的服务器时，回退到用量比例最高的那台。
+    /// </remarks>
+    public string? MenuBarServerId { get; set; }
 }
 
 /// <summary>账期内的「起始已用量」基准。</summary>
