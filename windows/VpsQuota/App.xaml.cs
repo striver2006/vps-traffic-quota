@@ -240,14 +240,22 @@ public partial class App : Application
             Dispatcher.BeginInvoke(() =>
             {
                 if (_popup is not { IsVisible: true }) return;
-                var source = PresentationSource.FromVisual(_popup);
-                if (source?.CompositionTarget is null) return;
-                // 钩子给的是物理像素，窗口坐标是 WPF 单位，多显示器不同缩放要先换算。
-                var position = source.CompositionTarget.TransformFromDevice
-                    .Transform(new System.Windows.Point(point.X, point.Y));
-                var bounds = new Rect(_popup.Left, _popup.Top, _popup.ActualWidth, _popup.ActualHeight);
-                bounds.Inflate(16, 16);   // 外层 14 的投影留白也算面板本体
-                if (bounds.Contains(position)) return;
+                // 全程留在物理像素里比较。PerMonitorV2 下 Window.Left/Top 是按
+                // "面板自己那块屏"的缩放折算出来的 WPF 单位，拿它的 transform 去换算
+                // 另一块屏（缩放不同）上的点会算错 —— 点在别的显示器上有可能被误判成
+                // 落在面板内，面板就收不起来。GetWindowRect 直接给物理矩形，不做跨屏换算。
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(_popup).Handle;
+                if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var bounds)) return;
+                // 命中范围往外放宽一点，贴着面板边缘的点击不算"点在外面"。
+                // 这圈容差是面板自己屏幕上的视觉尺寸，按该窗口的 DPI 折算成物理像素。
+                var dpi = GetDpiForWindow(hwnd);
+                var scale = (dpi == 0 ? 96u : dpi) / 96.0;
+                var pad = (int)(16 * scale);
+                if (point.X >= bounds.Left - pad && point.X <= bounds.Right + pad
+                    && point.Y >= bounds.Top - pad && point.Y <= bounds.Bottom + pad)
+                {
+                    return;
+                }
                 HidePopup();
             });
         }
@@ -364,6 +372,13 @@ public partial class App : Application
     private static extern IntPtr CallNextHookEx(
         IntPtr hook, int nCode, IntPtr wParam, IntPtr lParam);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+    /// <summary>窗口所在显示器的 DPI。PerMonitorV2 下每块屏可以不一样。</summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr window);
+
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     [System.Runtime.InteropServices.StructLayout(
@@ -372,6 +387,17 @@ public partial class App : Application
     {
         public int X;
         public int Y;
+    }
+
+    /// <summary>Win32 RECT：物理像素，right/bottom 是开区间边界。</summary>
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     protected override async void OnExit(ExitEventArgs e)
