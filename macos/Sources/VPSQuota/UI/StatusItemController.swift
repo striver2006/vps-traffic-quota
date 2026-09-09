@@ -32,6 +32,11 @@ final class StatusItemController: NSObject {
     /// 悬停打开后跟踪鼠标位置的关闭轮询。
     private var closeTimer: Timer?
 
+    /// 轮询连续判定"鼠标在外"的次数。托管状态项的窗口坐标和 tracking 事件都不可信，
+    /// 单次误判"已离开"就直接收起的话，紧跟着的假 entered 又会把面板打开，
+    /// 关-开-关循环就是肉眼看到的一闪一闪。连续两拍（约 0.6 秒）都在外才真正收起。
+    private var awayPollCount = 0
+
     /// 面板是点击打开的。此时不跟随鼠标关闭 —— 用户是主动打开的，
     /// 要让他能把鼠标移到别处（比如去复制一段错误信息）而面板还在。
     private var isPinned = false
@@ -219,8 +224,19 @@ final class StatusItemController: NSObject {
     }
 
     private var pointerIsOverItem: Bool {
+        let point = NSEvent.mouseLocation
         // 菜单栏底边和面板顶边之间有几个点的缝，鼠标穿过时不该被判成"已离开"。
-        itemRect?.insetBy(dx: -2, dy: -8).contains(NSEvent.mouseLocation) ?? false
+        if itemRect?.insetBy(dx: -2, dy: -8).contains(point) == true { return true }
+        // 缓存的 itemRect 可能过期（托管的按钮窗口坐标不可信，见 resolveItemRect）。
+        // 这里用实时坐标兜底：只要按钮此刻确实压在鼠标下就不算离开 ——
+        // 收起宁可慢半拍，误关之后紧跟着重开，面板就闪了。
+        if let button = statusItem?.button, let window = button.window {
+            let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+            if rect.width > 1, rect.insetBy(dx: -2, dy: -8).contains(point) {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - 悬停与点击
@@ -348,6 +364,7 @@ final class StatusItemController: NSObject {
     private func scheduleAutoClose() {
         guard !isPinned else { return }
         closeTimer?.invalidate()
+        awayPollCount = 0
 
         let timer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.closeIfPointerAway() }
@@ -363,7 +380,13 @@ final class StatusItemController: NSObject {
             closeTimer = nil
             return
         }
-        guard !pointerIsOverPanel else { return }
+        guard !pointerIsOverPanel else {
+            awayPollCount = 0
+            return
+        }
+        awayPollCount += 1
+        guard awayPollCount >= 2 else { return }
+        awayPollCount = 0
         hide()
     }
 
