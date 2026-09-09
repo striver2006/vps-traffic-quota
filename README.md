@@ -76,14 +76,15 @@ swift test                  # 跑单元测试
 open build/VPSQuota.app
 ```
 
-装到应用目录并开机自启：
+装到应用目录：
 
 ```bash
 cp -R build/VPSQuota.app /Applications/
-# 系统设置 → 通用 → 登录项 → 添加 VPSQuota.app
 ```
 
 首次启动后点菜单栏图标 → 设置，填入 API Key 和服务器。
+要开机自启就在「设置 → 启动」里打开「登录时启动」，它会登记到
+「系统设置 → 通用 → 登录项」，不必手工添加。
 
 > 每次重新执行 `build-app.sh`，ad-hoc 签名都会变化，macOS 因此把它当成另一个应用，
 > 首次读取钥匙串里的 Vultr API Key 时会弹出授权框 —— 点「始终允许」即可。
@@ -123,8 +124,9 @@ dotnet build VpsQuota.sln -c Release
 .\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
 ```
 
-开机自启：把 `VpsQuota.exe` 的快捷方式放进
-`shell:startup`（在运行框里输入即可打开该目录）。
+开机自启：在「设置 → 通用设置 → 启动」里勾选「开机时自动启动」。
+它写的是当前用户的注册表启动项，不需要管理员权限，
+随时可以在任务管理器的「启动应用」里禁用。
 
 ---
 

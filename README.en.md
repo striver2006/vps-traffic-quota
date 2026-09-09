@@ -90,14 +90,15 @@ swift test                  # run unit tests
 open build/VPSQuota.app
 ```
 
-To install and launch at login:
+To install:
 
 ```bash
 cp -R build/VPSQuota.app /Applications/
-# System Settings → General → Login Items → add VPSQuota.app
 ```
 
 On first launch, click the menu bar icon → Settings and fill in your API key and servers.
+To start it automatically, turn on "登录时启动" under Settings → 启动; it registers the app
+with System Settings → General → Login Items, so there is nothing to add by hand.
 
 > Every run of `build-app.sh` produces a different ad-hoc signature, so macOS treats it
 > as a different application and prompts for keychain access the first time it reads the
@@ -141,8 +142,9 @@ dotnet build VpsQuota.sln -c Release
 .\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
 ```
 
-To launch at login, put a shortcut to `VpsQuota.exe` in `shell:startup`
-(type that into the Run dialog to open the folder).
+To launch at login, tick "开机时自动启动" under Settings → 通用设置 → 启动. It writes a
+Run entry under the current user's registry hive, so no administrator rights are needed —
+and you can disable it any time from Task Manager's Startup apps tab.
 
 ---
 

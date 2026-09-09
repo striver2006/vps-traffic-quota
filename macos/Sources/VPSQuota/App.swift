@@ -18,8 +18,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 由 `VPSQuotaApp` 在启动时注入，用于打开主窗口。
     var openMainWindow: (() -> Void)?
 
+    /// 由 `VPSQuotaApp` 在启动时注入，用于关掉主窗口。
+    var closeMainWindow: (() -> Void)?
+
     /// 菜单栏常驻项。必须由这里强引用着，否则状态项会随控制器一起被释放。
     var statusItem: StatusItemController?
+
+    /// 这次是被系统当作登录项拉起来的，而不是用户自己双击打开的。
+    private(set) var launchedAtLogin = false
+
+    /// 开机自启时不要把主窗口糊到用户脸上 —— 登录那一刻他要的是它安静地待在菜单栏里。
+    ///
+    /// 主窗口的 Window 场景刻意没有 `.defaultLaunchBehavior(.suppressed)`
+    /// （见下面 `Window` 的注释：它是 bootstrap 唯一保证跑到的地方），
+    /// 所以只能在启动后把它关掉，而不是一开始就不建。
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let isDefaultLaunch =
+            notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
+        launchedAtLogin = !isDefaultLaunch
+        guard launchedAtLogin else { return }
+
+        // 这个回调与主窗口的 onAppear 谁先谁后并无保证：
+        // 窗口已经建出来了就由这里关掉，还没建出来则由 bootstrap() 读 launchedAtLogin 处理。
+        DispatchQueue.main.async { [weak self] in self?.closeMainWindow?() }
+    }
 
     func applicationShouldHandleReopen(
         _ sender: NSApplication, hasVisibleWindows: Bool
@@ -35,6 +57,7 @@ struct VPSQuotaApp: App {
     @State private var model = AppModel()
 
     @Environment(\.openWindow) private var openWindowFromEnvironment
+    @Environment(\.dismissWindow) private var dismissWindowFromEnvironment
 
     var body: some Scene {
         Window("VPS 流量", id: WindowID.main) {
@@ -94,6 +117,11 @@ struct VPSQuotaApp: App {
             open(id: WindowID.main)
             NSApp.activate(ignoringOtherApps: true)
         }
+
+        let dismiss = dismissWindowFromEnvironment
+        appDelegate.closeMainWindow = { dismiss(id: WindowID.main) }
+        // 登录项拉起来的：装配已经做完了，主窗口收起来即可。
+        if appDelegate.launchedAtLogin { dismiss(id: WindowID.main) }
 
         // 主窗口在启动时一定会被创建（设置窗口才是 suppressed 的），
         // 所以这里也是唯一一处保证会执行到的装配点。

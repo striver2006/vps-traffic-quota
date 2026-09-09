@@ -36,6 +36,40 @@ public partial class SettingsWindow : Window
         SelectInterval(_state.Config.RefreshIntervalMinutes);
         ReloadServerList();
         ReloadMenuBarChoices();
+
+        // 开机自启的真实状态在注册表里（用户随时可能在任务管理器里禁掉它），每次开窗都重读。
+        // 只在这里读一次就够：窗口关掉后 AppState 会重建实例，构造函数即"每次打开"。
+        // 不要挂到 Activated 上 —— 那样用户勾完切去别的窗口再切回来，勾选会被悄悄抹掉。
+        ReloadLaunchAtLogin();
+    }
+
+    // MARK: 开机自启
+
+    private void ReloadLaunchAtLogin()
+    {
+        LaunchAtLoginBox.IsChecked = LaunchAtLogin.IsEnabled;
+        LaunchAtLoginError.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>把勾选框写进注册表。返回 false 表示失败，错误已显示在界面上。</summary>
+    private bool CommitLaunchAtLogin()
+    {
+        var wanted = LaunchAtLoginBox.IsChecked == true;
+        try
+        {
+            LaunchAtLogin.SetEnabled(wanted);
+            LaunchAtLoginError.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // 光把勾选框弹回去，用户只会以为是自己点漏了，得说明原因。
+            LaunchAtLoginError.Text = $"开机自启设置失败：{ex.Message}";
+            LaunchAtLoginError.Visibility = Visibility.Visible;
+            LaunchAtLoginBox.IsChecked = LaunchAtLogin.IsEnabled;
+            OnShowGeneralClick(this, new RoutedEventArgs());
+            return false;
+        }
     }
 
     /// <summary>下拉项：一个值配一段中文说明。</summary>
@@ -321,6 +355,8 @@ public partial class SettingsWindow : Window
         _state.Config.RefreshIntervalMinutes = SelectedInterval();
         CommitMenuBarChoice();
         _state.SaveConfig();
+        // 登记失败时不关窗，否则那条错误提示刚显示出来就随窗口一起消失了。
+        if (!CommitLaunchAtLogin()) return;
         Close();
     }
 }

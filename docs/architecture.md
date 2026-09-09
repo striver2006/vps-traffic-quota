@@ -173,6 +173,13 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 「呈现方式」偏好存在 UserDefaults 而不是 `config.json` —— 它是 macOS 专属的界面设置，
 不该混进两端共用、可互相拷贝的那份配置。
 
+**开机自启同样不进 `config.json`**，而且连本地偏好都不存：它是「这台机器上的这次安装」
+的属性，配置文件拷到另一台机器上时不该把它带过去。两端各自把状态交给系统持有 ——
+macOS 用 `SMAppService.mainApp`（登记的是 bundle 本身，在「系统设置 → 登录项」里认得出来），
+Windows 写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（只影响当前用户，
+不要管理员权限）。用户可以在系统设置 / 任务管理器里直接关掉它，所以界面每次打开都
+重新读一次系统状态，不做本地缓存，否则开关会和实际情况对不上。
+
 **.app 是手工组装的**（[`macos/scripts/build-app.sh`](../macos/scripts/build-app.sh)），
 不用 Xcode 工程：SwiftPM 的包描述是纯文本、可 diff、可在命令行完整验证，
 而菜单栏应用需要的只是一个正确的 bundle 结构和 `Info.plist`。

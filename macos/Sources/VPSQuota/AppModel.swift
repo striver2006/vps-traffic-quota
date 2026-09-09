@@ -55,6 +55,24 @@ final class AppModel {
 
     private static let displayModeKey = "displayMode"
 
+    /// 是否开机自启。改动立即生效。
+    ///
+    /// 状态源是系统（`SMAppService`）而不是本地偏好，所以这里只是给界面绑定用的一份镜像：
+    /// 每次显示设置界面前用 `syncLaunchAtLogin()` 重新对齐，否则用户在系统设置里
+    /// 关掉之后，这个开关会一直停在"开"的位置。
+    var launchAtLogin: Bool {
+        didSet {
+            guard launchAtLogin != oldValue, !isApplyingLaunchAtLogin else { return }
+            applyLaunchAtLogin()
+        }
+    }
+
+    /// 登记失败的原因。非 nil 时设置界面会把它连同「打开登录项设置」一起显示出来。
+    private(set) var launchAtLoginError: String?
+
+    /// 防止 `applyLaunchAtLogin` 的回滚赋值又触发一轮 didSet。
+    private var isApplyingLaunchAtLogin = false
+
     private var monitor: TrafficMonitor?
     private let configStore = ConfigStore()
     private var refreshTimer: Timer?
@@ -65,6 +83,9 @@ final class AppModel {
         // 那样应用就完全没有入口了。宁可多一个 Dock 图标，也不要打不开。
         let saved = UserDefaults.standard.string(forKey: Self.displayModeKey)
         self.displayMode = saved.flatMap(DisplayMode.init(rawValue:)) ?? .both
+
+        // 默认不自启：这是用户该主动做的决定，装完就赖在登录项里不礼貌。
+        self.launchAtLogin = LaunchAtLogin.isEnabled
 
         // 配置读不出来时也要能启动，让用户有机会在设置界面里修好它。
         self.config = (try? configStore.load()) ?? AppConfig()
@@ -87,6 +108,40 @@ final class AppModel {
     /// setActivationPolicy 可以在运行时切换，所以 Dock 图标能随开随关。
     func applyActivationPolicy() {
         NSApp.setActivationPolicy(displayMode.showsDockIcon ? .regular : .accessory)
+    }
+
+    // MARK: - 开机自启
+
+    /// 把开关的当前值登记进系统。失败时回滚到系统的真实状态，
+    /// 不让开关停在一个并没有生效的位置上。
+    private func applyLaunchAtLogin() {
+        isApplyingLaunchAtLogin = true
+        defer { isApplyingLaunchAtLogin = false }
+
+        do {
+            try LaunchAtLogin.setEnabled(launchAtLogin)
+            // 登记成功但被系统标为待批准时，实际并没有开起来，得如实告诉用户。
+            launchAtLoginError = LaunchAtLogin.requiresApproval
+                ? "已登记，但系统设置里这一项还处于关闭状态，需要手动放行。"
+                : nil
+        } catch {
+            launchAtLoginError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+            launchAtLogin = LaunchAtLogin.isEnabled
+        }
+    }
+
+    /// 用系统的真实状态刷新开关。用户可能在系统设置里改过它。
+    func syncLaunchAtLogin() {
+        isApplyingLaunchAtLogin = true
+        defer { isApplyingLaunchAtLogin = false }
+
+        launchAtLogin = LaunchAtLogin.isEnabled
+        if !LaunchAtLogin.requiresApproval { launchAtLoginError = nil }
+    }
+
+    func openLoginItemsSettings() {
+        LaunchAtLogin.openSystemSettings()
     }
 
     /// 启动流程：先用本地数据把界面填满，再在后台发起真正的采集。

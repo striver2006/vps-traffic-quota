@@ -229,6 +229,20 @@
 
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
+                        <TextBlock Text="启动" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <CheckBox x:Name="LaunchAtLoginBox" Content="开机时自动启动"
+                                  FontSize="13" Foreground="{StaticResource TextSecondaryBrush}"
+                                  Margin="0,12,0,0"/>
+                        <TextBlock Style="{StaticResource FieldHelp}"
+                                   Text="登录当前 Windows 账户后自动在托盘启动并开始采集。流量按账期累计，漏采的那段时间补不回来，常驻着才有意义。登记写在当前用户的注册表启动项里，不需要管理员权限；随时可以在任务管理器的「启动应用」里禁用。"/>
+                        <TextBlock x:Name="LaunchAtLoginError" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="#E03B33" Margin="0,6,0,0" Visibility="Collapsed"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
                         <TextBlock Text="托盘显示" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>
                         <TextBlock Text="显示哪台服务器" Style="{StaticResource FieldLabel}" Margin="0,12,0,4"/>

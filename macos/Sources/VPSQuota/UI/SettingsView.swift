@@ -42,6 +42,9 @@ struct SettingsView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 700, minHeight: 520)
+        // 开机自启的真实状态在系统那边，用户随时可能在系统设置里改动它，
+        // 每次打开设置都重新对齐一次，免得开关显示的和实际的对不上。
+        .onAppear { model.syncLaunchAtLogin() }
         .onDisappear { model.saveConfig() }
     }
 
@@ -145,6 +148,26 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text("呈现方式")
+            }
+
+            Section {
+                Toggle("登录时启动", isOn: $model.launchAtLogin)
+                Text("登记到「系统设置 → 通用 → 登录项」，开机后自动在后台开始采集。流量是按账期累计的，漏采的那段时间补不回来，常驻着才有意义。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error = model.launchAtLoginError {
+                    // 未签名 / 不在 /Applications 下时系统可能拒绝登记，
+                    // 光把开关弹回去用户只会以为是点漏了，得说明原因并给条出路。
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("打开登录项设置") { model.openLoginItemsSettings() }
+                        .buttonStyle(.link)
+                }
+            } header: {
+                Text("启动")
             }
 
             Section {
