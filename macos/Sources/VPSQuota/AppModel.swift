@@ -183,11 +183,40 @@ final class AppModel {
     }
 
     /// 菜单栏图标旁边的文字：所选服务器本账期还剩多少流量。
+    /// 关掉显示、或还没有任何数据时返回 nil，此时菜单栏上只剩图标。
     /// 配额未知时没有"剩余"可言，用短横占位而不是退回百分比。
     var menuBarTitle: String? {
-        guard let status = menuBarStatus else { return nil }
+        guard config.menuBarShowsRemaining, let status = menuBarStatus else { return nil }
         guard let remaining = status.remainingGB else { return "—" }
-        return ByteFormat.gb(remaining)
+        return ByteFormat.compact(remaining)
+    }
+
+    /// 菜单栏文字的三种去向，收成一个值好让设置界面用一个 Picker 表达。
+    /// 选「不显示」时会保留原来指定的服务器，改回来不用重选。
+    enum MenuBarSelection: Hashable {
+        case hidden
+        case automatic
+        case server(String)
+    }
+
+    var menuBarSelection: MenuBarSelection {
+        get {
+            guard config.menuBarShowsRemaining else { return .hidden }
+            if let id = config.menuBarServerId { return .server(id) }
+            return .automatic
+        }
+        set {
+            switch newValue {
+            case .hidden:
+                config.menuBarShowsRemaining = false
+            case .automatic:
+                config.menuBarShowsRemaining = true
+                config.menuBarServerId = nil
+            case .server(let id):
+                config.menuBarShowsRemaining = true
+                config.menuBarServerId = id
+            }
+        }
     }
 
     var hasAnyError: Bool {

@@ -45,7 +45,11 @@ struct CrossPlatformConfigTests {
                          sshKeyPath: "~/.ssh/id_ed25519", interface: "eth0"),
         ])
         let json = try encode(config)
-        #expect(Set(json.keys) == ["refreshIntervalMinutes", "servers"])
+        // menuBarShowsRemaining 有默认值、不是可选，所以总会写出来；
+        // menuBarServerId 缺省时才会被省略。
+        #expect(Set(json.keys) == [
+            "refreshIntervalMinutes", "servers", "menuBarShowsRemaining",
+        ])
 
         let server = try #require((json["servers"] as? [[String: Any]])?.first)
         // C# 端的 JsonNamingPolicy.CamelCase 只把首字母小写，
@@ -149,6 +153,37 @@ struct CrossPlatformConfigTests {
         let baseline = try #require(config.servers[0].usageBaseline)
         #expect(baseline.periodStart == "2026-08-10")
         #expect(baseline.usedGB == 320.5)
+    }
+
+    @Test("菜单栏的紧凑写法与面板同一套换算，只是单位缩成一个字母")
+    func compactMatchesPanelFormatting() {
+        #expect(ByteFormat.compact(2048) == "2.00T")
+        #expect(ByteFormat.compact(1500) == "1.46T")
+        #expect(ByteFormat.compact(576) == "576G")
+        #expect(ByteFormat.compact(45.62) == "45.6G")
+        #expect(ByteFormat.compact(0.5) == "512M")
+
+        // 换挡的位置必须和面板一致，否则同一个数在两处会显示成不同单位
+        for value in [0.99, 1.0, 99.9, 100.0, 1023.9, 1024.0] {
+            let panelUnit = ByteFormat.gb(value).suffix(2).prefix(1)   // "MB"/"GB"/"TB" 的首字母
+            let compactUnit = ByteFormat.compact(value).suffix(1)
+            #expect(String(panelUnit) == String(compactUnit), "在 \(value) GB 处换挡不一致")
+        }
+    }
+
+    @Test("菜单栏文字可以整个关掉，旧配置缺这个键时默认开着")
+    func menuBarShowsRemainingDefaultsToTrue() throws {
+        #expect(AppConfig().menuBarShowsRemaining)
+
+        let off = AppConfig(servers: [], menuBarShowsRemaining: false)
+        #expect(try encode(off)["menuBarShowsRemaining"] as? Bool == false)
+
+        // 1.0 时代写出的配置里没有这个键，读进来必须是"显示"，不能静默关掉。
+        let legacy = """
+        { "refreshIntervalMinutes": 60, "servers": [] }
+        """
+        let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(legacy.utf8))
+        #expect(decoded.menuBarShowsRemaining)
     }
 
     @Test("菜单栏指定的服务器随配置一起走，且没指定时不写进 JSON")

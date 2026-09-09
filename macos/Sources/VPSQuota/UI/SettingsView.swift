@@ -148,14 +148,16 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("显示服务器", selection: $model.config.menuBarServerId) {
-                    Text("自动（用量最紧张的一台）").tag(String?.none)
+                Picker("显示剩余流量", selection: $model.menuBarSelection) {
+                    Text("不显示（只留图标）").tag(AppModel.MenuBarSelection.hidden)
+                    Divider()
+                    Text("自动（用量最紧张的一台）").tag(AppModel.MenuBarSelection.automatic)
                     ForEach(model.config.servers) { server in
                         Text(server.name.isEmpty ? "未命名" : server.name)
-                            .tag(String?.some(server.id))
+                            .tag(AppModel.MenuBarSelection.server(server.id))
                     }
                 }
-                Text("菜单栏图标旁只显示这一台本账期还剩多少流量。这台服务器没设配额时无从算起，会显示一道短横。")
+                Text("菜单栏图标旁只显示这一台本账期还剩多少流量。单位跟着数值走（T / G / M），只写一个字母以少占地方。这台服务器没设配额时无从算起，会显示一道短横。选「不显示」则只保留图标，颜色仍会随严重程度变化。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

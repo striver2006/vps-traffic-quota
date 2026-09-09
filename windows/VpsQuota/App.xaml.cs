@@ -31,6 +31,9 @@ public partial class App : Application
     /// <summary>右键菜单顶部那行只读摘要：所选服务器的剩余流量。</summary>
     private Forms.ToolStripMenuItem? _summaryItem;
 
+    /// <summary>摘要行下面那条分隔线。摘要藏起来时它也得跟着藏，否则菜单顶上会多出一道线。</summary>
+    private Forms.ToolStripSeparator? _summarySeparator;
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -56,9 +59,11 @@ public partial class App : Application
         // 首行是只读摘要，把"剩余多少 GB"直接摆在菜单上，不用先展开面板。
         _summaryItem = new Forms.ToolStripMenuItem("VPS 流量") { Enabled = false };
 
+        _summarySeparator = new Forms.ToolStripSeparator();
+
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(_summaryItem);
-        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(_summarySeparator);
         menu.Items.Add("显示面板", null, (_, _) => ShowMainWindow());
         menu.Items.Add("立即刷新", null, async (_, _) =>
         {
@@ -156,7 +161,12 @@ public partial class App : Application
             // GetHicon 分配的是非托管句柄，换掉之后必须显式销毁，否则每次刷新都漏一个。
             previous?.Dispose();
 
-            if (_summaryItem is not null)
+            // 「不显示剩余流量」在 Windows 上就是把这行摘要连同分隔线一起藏掉。
+            var showsSummary = _state.Config.MenuBarShowsRemaining;
+            if (_summaryItem is not null) _summaryItem.Visible = showsSummary;
+            if (_summarySeparator is not null) _summarySeparator.Visible = showsSummary;
+
+            if (_summaryItem is not null && showsSummary)
             {
                 // ToolStrip 会把 & 当成助记符前缀吃掉，服务器名里若有它得先转义。
                 var name = status?.Server.Name.Replace("&", "&&") ?? "";

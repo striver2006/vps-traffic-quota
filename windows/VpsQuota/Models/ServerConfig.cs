@@ -71,6 +71,12 @@ public sealed class AppConfig
     /// 为 null、或指向一台已被删除的服务器时，回退到用量比例最高的那台。
     /// </remarks>
     public string? MenuBarServerId { get; set; }
+
+    /// <summary>
+    /// 常驻区要不要显示剩余流量的文字。关掉后 macOS 菜单栏只剩一个图标，
+    /// Windows 托盘右键菜单不再显示那行摘要。
+    /// </summary>
+    public bool MenuBarShowsRemaining { get; set; } = true;
 }
 
 /// <summary>账期内的「起始已用量」基准。</summary>

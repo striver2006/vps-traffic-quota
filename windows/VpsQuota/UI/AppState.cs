@@ -2,7 +2,6 @@ namespace VpsQuota.UI;
 
 using System.Windows;
 using System.Windows.Threading;
-using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.Scheduler;
 using VpsQuota.Storage;
@@ -188,18 +187,6 @@ public sealed class AppState
         }
     }
 
-    /// <summary>
-    /// 托盘图标上要画的文字：所选服务器本账期还剩多少流量。
-    /// 配额未知时没有"剩余"可言，用短横占位而不是退回百分比。
-    /// </summary>
-    public string? MenuBarTitle
-    {
-        get
-        {
-            if (MenuBarStatus is not { } status) return null;
-            return status.RemainingGB is { } remaining ? ByteFormat.GB(remaining) : "—";
-        }
-    }
 
     public bool HasAnyError => Statuses.Any(s => s.LastError is not null);
 

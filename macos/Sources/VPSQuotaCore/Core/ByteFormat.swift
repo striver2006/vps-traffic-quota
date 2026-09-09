@@ -14,6 +14,19 @@ public enum ByteFormat {
         return String(format: value >= 100 ? "%.0f GB" : "%.1f GB", value)
     }
 
+    /// 菜单栏专用的紧凑写法：换算规则与 `gb(_:)` 完全一致，
+    /// 只是单位缩成一个字母、不留空格 —— `1.94T` 比 `1.94 TB` 省两个字符，
+    /// 菜单栏本来就挤，能省则省。
+    public static func compact(_ value: Double) -> String {
+        if value < 1 {
+            return String(format: "%.0fM", value * 1024)
+        }
+        if value >= 1024 {
+            return String(format: "%.2fT", value / 1024)
+        }
+        return String(format: value >= 100 ? "%.0fG" : "%.1fG", value)
+    }
+
     /// 百分比，保留整数位。
     public static func percent(_ fraction: Double) -> String {
         String(format: "%.0f%%", fraction * 100)

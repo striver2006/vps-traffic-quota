@@ -20,8 +20,9 @@ Monitor monthly bandwidth usage across VPS instances on DMIT and Vultr.
 Runs locally in your desktop's status area, collects on a schedule.
 
 - **macOS** — lives in the menu bar; the icon shows how much traffic the server you
-  pick has left this period. Hover over it and the panel floats out. A main window
-  serves as a fallback entry point.
+  pick has left this period (e.g. `1.94T` / `576G`, or turn the text off and keep just
+  the icon).
+  Hover over it and the panel floats out. A main window serves as a fallback entry point.
 - **Windows** — lives in the system tray; the icon changes color with usage, and
   hovering over it floats out the same panel.
 

@@ -4,6 +4,9 @@
   "//menuBarServerId": "菜单栏 / 托盘只显示这一台的剩余流量，填某台服务器的 id。删掉这个键则跟着用量最紧张的那台走。一般在「设置 → 菜单栏 / 托盘显示」里选，不必手写。",
   "menuBarServerId": "dmit-lax",
 
+  "//menuBarShowsRemaining": "改成 false 就不显示剩余流量的文字：macOS 菜单栏只剩图标，Windows 右键菜单不再有那行摘要。缺省为 true。",
+  "menuBarShowsRemaining": true,
+
   "servers": [
     {
       "id": "vultr-singapore",

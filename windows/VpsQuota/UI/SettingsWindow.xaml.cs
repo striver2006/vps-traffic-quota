@@ -44,8 +44,11 @@ public partial class SettingsWindow : Window
         public override string ToString() => Label;
     }
 
-    /// <summary>「托盘显示哪台」的下拉项。Id 为 null 表示自动挑用量最紧张的那台。</summary>
-    private sealed record MenuBarChoice(string? Id, string Label)
+    /// <summary>
+    /// 「托盘显示哪台」的下拉项。<paramref name="Shows"/> 为 false 是「不显示」；
+    /// 为 true 且 <paramref name="Id"/> 为 null 则自动挑用量最紧张的那台。
+    /// </summary>
+    private sealed record MenuBarChoice(bool Shows, string? Id, string Label)
     {
         public override string ToString() => Label;
     }
@@ -55,21 +58,32 @@ public partial class SettingsWindow : Window
     {
         // 第一次填充时下拉里还什么都没有，选择只能从配置取；
         // 之后要以界面上的当前选择为准，否则用户改成「自动」再加一台会被弹回去。
-        var current = MenuBarServerBox.ItemsSource is null
-            ? _state.Config.MenuBarServerId
-            : (MenuBarServerBox.SelectedItem as MenuBarChoice)?.Id;
+        var current = MenuBarServerBox.SelectedItem as MenuBarChoice
+            ?? new MenuBarChoice(_state.Config.MenuBarShowsRemaining,
+                                 _state.Config.MenuBarServerId, "");
 
-        var choices = new List<MenuBarChoice> { new(null, "自动（用量最紧张的一台）") };
+        var choices = new List<MenuBarChoice>
+        {
+            new(false, null, "不显示（只留图标）"),
+            new(true, null, "自动（用量最紧张的一台）"),
+        };
         choices.AddRange(_state.Config.Servers.Select(s =>
-            new MenuBarChoice(s.Id, string.IsNullOrEmpty(s.Name) ? "未命名" : s.Name)));
+            new MenuBarChoice(true, s.Id, string.IsNullOrEmpty(s.Name) ? "未命名" : s.Name)));
 
         MenuBarServerBox.ItemsSource = choices;
         MenuBarServerBox.SelectedItem =
-            choices.FirstOrDefault(c => c.Id == current) ?? choices[0];
+            choices.FirstOrDefault(c => c.Shows == current.Shows && c.Id == current.Id)
+            ?? choices[1];   // 指定的那台没了就回到「自动」
     }
 
-    private string? SelectedMenuBarServerId() =>
-        (MenuBarServerBox.SelectedItem as MenuBarChoice)?.Id;
+    /// <summary>把下拉里的选择写回配置。「不显示」保留原来指定的那台，改回来不用重选。</summary>
+    private void CommitMenuBarChoice()
+    {
+        if (MenuBarServerBox.SelectedItem is not MenuBarChoice choice) return;
+
+        _state.Config.MenuBarShowsRemaining = choice.Shows;
+        if (choice.Shows) _state.Config.MenuBarServerId = choice.Id;
+    }
 
     // MARK: 页面导航
 
@@ -277,7 +291,7 @@ public partial class SettingsWindow : Window
         CommitForm();
         _state.VultrApiKey = ApiKeyBox.Password;
         _state.Config.RefreshIntervalMinutes = SelectedInterval();
-        _state.Config.MenuBarServerId = SelectedMenuBarServerId();
+        CommitMenuBarChoice();
         // 测试前先落盘，否则测的是编辑前的旧值。
         _state.SaveConfig();
 
@@ -305,7 +319,7 @@ public partial class SettingsWindow : Window
         CommitForm();
         _state.VultrApiKey = ApiKeyBox.Password;
         _state.Config.RefreshIntervalMinutes = SelectedInterval();
-        _state.Config.MenuBarServerId = SelectedMenuBarServerId();
+        CommitMenuBarChoice();
         _state.SaveConfig();
         Close();
     }

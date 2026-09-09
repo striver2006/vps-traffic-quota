@@ -12,6 +12,9 @@
 
 模板见 [`shared/config.example.json`](../shared/config.example.json)。
 
+菜单栏上的剩余流量与面板用同一套换算（≥1 TB 用 T、≥1 GB 用 G、其余用 M），
+只是单位缩成一个字母、不留空格：`1.94T`、`576G`、`512M`。其余界面仍用完整写法。
+
 ---
 
 ## 顶层字段
@@ -21,6 +24,7 @@
 | `refreshIntervalMinutes` | int | 自动刷新周期（分钟）。界面提供 15 / 60 / 360 / 1440 四档；手改成小于 5 的值会被强制抬到 5 |
 | `servers` | array | 服务器列表，界面按此顺序显示 |
 | `menuBarServerId` | string \| 缺省 | 常驻区（macOS 菜单栏 / Windows 托盘）显示哪台服务器的剩余流量，取值是某台服务器的 `id`。缺省或指向一台已删除的服务器时，回退到用量比例最高的那台 |
+| `menuBarShowsRemaining` | bool | 常驻区要不要显示剩余流量的文字。`false` 时 macOS 菜单栏只剩图标、Windows 右键菜单不再有那行摘要，图标颜色照常随严重程度变化。缺省 `true` |
 
 ## 服务器字段
 

@@ -114,14 +114,20 @@ public struct AppConfig: Codable, Sendable {
     /// 为 nil、或指向一台已被删除的服务器时，回退到用量比例最高的那台。
     public var menuBarServerId: String?
 
+    /// 常驻区要不要显示剩余流量的文字。关掉就只剩一个图标 ——
+    /// 菜单栏本来就挤，有人只想要那点颜色变化，不想再多占几十个像素。
+    public var menuBarShowsRemaining: Bool
+
     public init(
         refreshIntervalMinutes: Int = 60,
         servers: [ServerConfig] = [],
-        menuBarServerId: String? = nil
+        menuBarServerId: String? = nil,
+        menuBarShowsRemaining: Bool = true
     ) {
         self.refreshIntervalMinutes = refreshIntervalMinutes
         self.servers = servers
         self.menuBarServerId = menuBarServerId
+        self.menuBarShowsRemaining = menuBarShowsRemaining
     }
 
     /// 旧配置文件缺字段时的兜底，避免一次手改 JSON 就整个读不出来。
@@ -131,5 +137,7 @@ public struct AppConfig: Codable, Sendable {
             try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 60
         self.servers = try c.decodeIfPresent([ServerConfig].self, forKey: .servers) ?? []
         self.menuBarServerId = try c.decodeIfPresent(String.self, forKey: .menuBarServerId)
+        self.menuBarShowsRemaining =
+            try c.decodeIfPresent(Bool.self, forKey: .menuBarShowsRemaining) ?? true
     }
 }
