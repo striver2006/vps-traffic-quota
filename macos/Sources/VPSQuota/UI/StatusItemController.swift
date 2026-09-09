@@ -102,7 +102,8 @@ final class StatusItemController: NSObject {
             button.imagePosition = .imageOnly
         }
 
-        button.toolTip = tooltip
+        // 刻意不设 button.toolTip：悬停已经会浮出完整面板，
+        // 系统 tooltip 再冒出来只会盖在它上面，说的还是同一件事。
     }
 
     /// 图标随所选那台的严重程度变化，不展开面板也能察觉异常。
@@ -111,15 +112,6 @@ final class StatusItemController: NSObject {
             return "exclamationmark.triangle"
         }
         return model.menuBarStatus?.severity == .critical ? "chart.bar.fill" : "chart.bar"
-    }
-
-    private var tooltip: String {
-        guard let status = model.menuBarStatus else { return "VPS 流量" }
-        guard let remaining = status.remainingGB else {
-            return "\(status.server.name)　已用 \(ByteFormat.gb(status.usedGB))　配额未知"
-        }
-        return "\(status.server.name)　剩余 \(ByteFormat.gb(remaining))"
-            + " / \(ByteFormat.gb(status.quotaGB))　账期剩 \(status.remainingDays) 天"
     }
 
     /// 模型是 `@Observable`，这里用观察事务把变化接回 AppKit。
@@ -141,7 +133,11 @@ final class StatusItemController: NSObject {
 
     // MARK: - 悬停与点击
 
-    @objc func mouseEntered(with event: NSEvent) {
+    // 必须显式写死 selector。Swift 给 `mouseEntered(with:)` 自动生成的 @objc 名字是
+    // `mouseEnteredWith:`（只有 override NSResponder 的同名方法才会保留原名），
+    // 而 AppKit 向 NSTrackingArea 的 owner 发的是 `mouseEntered:` —— 名字对不上
+    // 就静默收不到任何悬停事件，点击却照常工作，极难看出问题出在哪。
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {
         hoverTask?.cancel()
         hoverTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(200))
@@ -150,7 +146,7 @@ final class StatusItemController: NSObject {
         }
     }
 
-    @objc func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) {
         hoverTask?.cancel()
         hoverTask = nil
         scheduleAutoClose()
