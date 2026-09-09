@@ -22,6 +22,31 @@ public partial class App : Application
     /// <summary>最后一次收到托盘图标 MouseMove 的时刻，用来判断鼠标是否已经离开图标。</summary>
     private DateTime _lastTrayHoverAt;
 
+    /// <summary>最后一次 MouseMove 时的指针屏幕坐标（物理像素）。</summary>
+    /// <remarks>
+    /// 托盘图标只在指针移动时才发 MouseMove，静止悬停不会再来事件。
+    /// 只靠"多久没收到事件"判断离开，手停在图标上不动也会被误判成已离开、
+    /// 面板收起后手一抖又立刻弹出，看起来就是一闪一闪。
+    /// 而指针要离开图标就必须先移动 —— 坐标和最后一次在图标上时完全一致，
+    /// 就能证明它还悬停在原处。
+    /// </remarks>
+    private System.Drawing.Point _lastTrayPointerPos;
+
+    /// <summary>面板是否被点击固定。固定时不跟随鼠标自动收起，再点图标或点面板外才收。</summary>
+    private bool _popupPinned;
+
+    /// <summary>固定期间挂上的低级鼠标钩子：面板不抢焦点，点在外面只能靠它发现。</summary>
+    private IntPtr _clickHook;
+
+    /// <summary>钩子回调的委托必须强引用，被 GC 收走钩子就失效了。</summary>
+    private LowLevelMouseProc? _clickHookProc;
+
+    /// <summary>
+    /// 面板从"固定"状态收起的时刻。收起它的那次点击还会传给图标本身，
+    /// 紧跟着的 MouseClick 不能当成新一轮"打开"，否则固定面板永远关不掉。
+    /// </summary>
+    private DateTime _popupUnpinnedAt = DateTime.MinValue;
+
     /// <summary>面板的收起判定。托盘图标没有"鼠标移出"事件，只能轮询。</summary>
     private readonly DispatcherTimer _hoverTimer = new()
     {
@@ -64,7 +89,7 @@ public partial class App : Application
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(_summaryItem);
         menu.Items.Add(_summarySeparator);
-        menu.Items.Add("显示面板", null, (_, _) => ShowMainWindow());
+        menu.Items.Add("打开主界面", null, (_, _) => ShowMainWindow());
         menu.Items.Add("立即刷新", null, async (_, _) =>
         {
             if (_state is not null) await _state.RefreshAsync();
@@ -81,16 +106,18 @@ public partial class App : Application
             Text = "",
             ContextMenuStrip = menu,
         };
-        // 单击（而非右键）直接打开主窗口，和 macOS 端点菜单栏图标的手感一致。
+        // 单击：固定/收起面板。主界面从右键菜单或面板里的按钮进 ——
+        // 托盘单击直接弹主窗口太重，也和悬停面板内容重复。
         _tray.MouseClick += (_, args) =>
         {
-            if (args.Button == Forms.MouseButtons.Left) ShowMainWindow();
+            if (args.Button == Forms.MouseButtons.Left) TogglePinnedPopup();
         };
         // 托盘图标只有 MouseMove，没有 MouseEnter/Leave：
         // 进入靠它触发，离开靠 _hoverTimer 发现"一段时间没再收到 MouseMove"。
         _tray.MouseMove += (_, _) =>
         {
             _lastTrayHoverAt = DateTime.UtcNow;
+            _lastTrayPointerPos = Forms.Cursor.Position;
             ShowPopup();
         };
 
@@ -101,7 +128,7 @@ public partial class App : Application
 
     // MARK: 悬停面板
 
-    private void ShowPopup()
+    private void ShowPopup(bool pinned = false)
     {
         if (_state is null) return;
 
@@ -110,9 +137,29 @@ public partial class App : Application
             _popup = new TrayPopupWindow(_state);
             // 面板被关掉（而不是隐藏）之后就不能再 Show 了，置空好让下次重建。
             _popup.Closed += (_, _) => _popup = null;
+            // 收起路径有好几条（悬停超时、点外面、面板按钮里自己 Hide），
+            // 固定态和钩子统一在这里清，漏一条就会留一个全局鼠标钩子。
+            _popup.IsVisibleChanged += (_, e) =>
+            {
+                if ((bool)e.NewValue) return;
+                if (_popupPinned) _popupUnpinnedAt = DateTime.UtcNow;
+                _popupPinned = false;
+                UninstallClickHook();
+            };
         }
         if (!_popup.IsVisible) _popup.ShowNearTray();
-        _hoverTimer.Start();
+        // 悬停期间鼠标一动就会再进这里，不能把已经固定的面板降回悬停模式。
+        if (pinned) _popupPinned = true;
+
+        if (_popupPinned)
+        {
+            _hoverTimer.Stop();
+            InstallClickHook();
+        }
+        else
+        {
+            _hoverTimer.Start();
+        }
     }
 
     private void HidePopupIfPointerAway()
@@ -122,10 +169,18 @@ public partial class App : Application
             _hoverTimer.Stop();
             return;
         }
+        // 固定的面板不跟随鼠标：只有再点图标或点在外面才收。
+        if (_popupPinned)
+        {
+            _hoverTimer.Stop();
+            return;
+        }
         // 鼠标已经移进面板里了 —— 用户正要点按钮，不能收。
         if (_popup.IsMouseOver) return;
         // 还在图标上（MouseMove 仍在源源不断地来）也不收。
         if ((DateTime.UtcNow - _lastTrayHoverAt).TotalMilliseconds < 500) return;
+        // 事件静默但指针坐标分毫未动 —— 它不可能不移动就离开图标，静止悬停不是离开。
+        if (Forms.Cursor.Position == _lastTrayPointerPos) return;
 
         HidePopup();
     }
@@ -133,7 +188,70 @@ public partial class App : Application
     private void HidePopup()
     {
         _hoverTimer.Stop();
+        // 固定态和鼠标钩子在 IsVisibleChanged 里统一清。
         _popup?.Hide();
+    }
+
+    /// <summary>单击图标：第一次固定面板，再点一次收起。</summary>
+    private void TogglePinnedPopup()
+    {
+        if (_popup is { IsVisible: true } && _popupPinned)
+        {
+            HidePopup();
+            return;
+        }
+        // 低级钩子先于图标自己的 MouseClick 收起面板，那次点击紧接着传到这里，
+        // 不能当成新的"打开"。悬停自动收起不记这个时间戳，不受影响。
+        if ((DateTime.UtcNow - _popupUnpinnedAt).TotalMilliseconds < 400) return;
+        ShowPopup(pinned: true);
+    }
+
+    private void InstallClickHook()
+    {
+        if (_clickHook != IntPtr.Zero) return;
+        _clickHookProc ??= ClickHookProc;
+        _clickHook = SetWindowsHookEx(WH_MOUSE_LL, _clickHookProc!, GetModuleHandle(null), 0);
+    }
+
+    private void UninstallClickHook()
+    {
+        if (_clickHook == IntPtr.Zero) return;
+        var hook = _clickHook;
+        _clickHook = IntPtr.Zero;
+        UnhookWindowsHookEx(hook);
+    }
+
+    /// <summary>
+    /// 固定期间的全局鼠标监视：按下发生在面板外任何地方（含图标、别的窗口、桌面）
+    /// 就收起面板。点击本身照常传给目标，这里只旁观不改写。
+    /// </summary>
+    private IntPtr ClickHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        const uint leftDown = 0x0201, rightDown = 0x0204, middleDown = 0x0207, xDown = 0x020B;
+        var message = unchecked((uint)wParam.ToInt64());
+        var isDown = nCode >= 0
+            && (message == leftDown || message == rightDown
+                || message == middleDown || message == xDown);
+        if (isDown)
+        {
+            // MSLLHOOKSTRUCT 的第一个成员就是 POINT，只读坐标不必整块解析。
+            var point = System.Runtime.InteropServices.Marshal
+                .PtrToStructure<NativePoint>(lParam);
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_popup is not { IsVisible: true }) return;
+                var source = PresentationSource.FromVisual(_popup);
+                if (source?.CompositionTarget is null) return;
+                // 钩子给的是物理像素，窗口坐标是 WPF 单位，多显示器不同缩放要先换算。
+                var position = source.CompositionTarget.TransformFromDevice
+                    .Transform(new System.Windows.Point(point.X, point.Y));
+                var bounds = new Rect(_popup.Left, _popup.Top, _popup.ActualWidth, _popup.ActualHeight);
+                bounds.Inflate(16, 16);   // 外层 14 的投影留白也算面板本体
+                if (bounds.Contains(position)) return;
+                HidePopup();
+            });
+        }
+        return CallNextHookEx(_clickHook, nCode, wParam, lParam);
     }
 
     private void ShowMainWindow()
@@ -230,9 +348,36 @@ public partial class App : Application
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr handle);
 
+    private const int WH_MOUSE_LL = 14;
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(
+        int idHook, LowLevelMouseProc callback, IntPtr module, uint threadId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(
+        IntPtr hook, int nCode, IntPtr wParam, IntPtr lParam);
+
+    private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
     protected override async void OnExit(ExitEventArgs e)
     {
         _hoverTimer.Stop();
+        UninstallClickHook();
         _popup?.Close();
 
         if (_tray is not null)
