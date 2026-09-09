@@ -7,13 +7,25 @@ import VPSQuotaCore
 /// 没有沿用 SwiftUI 的 `MenuBarExtra`：它只在**点击**时展开。
 /// 要做到"移上去就显示"，必须在状态项的按钮上挂一个 `NSTrackingArea`，
 /// 而那个按钮只有自己持有 `NSStatusItem` 才拿得到 —— MenuBarExtra 不暴露它。
+///
+/// macOS 26 起状态项由系统进程托管，应用这边拿到的按钮窗口有两个坑，都在这里绕开：
+/// 1. 显示器睡眠/重连后，按钮窗口的 frame 停在旧坐标不再更新（见 `resolveItemRect`）。
+/// 2. NSPopover 的 `.transient` 会把点击图标本身当成"点了面板外面"（见 `installDismissMonitors`）。
 @MainActor
 final class StatusItemController: NSObject {
     private let model: AppModel
     private let popover = NSPopover()
+    /// 面板的定位锚。面板不直接挂在按钮上，因为按钮窗口的 frame 不可信。
+    private let anchor: NSWindow
 
     private var statusItem: NSStatusItem?
     private var trackingArea: NSTrackingArea?
+    private var screenObserver: NSObjectProtocol?
+    private var reinstallTask: Task<Void, Never>?
+    private var lastReinstall = Date.distantPast
+
+    /// 图标在屏幕上的矩形，由 `resolveItemRect` 在鼠标落在图标上时刷新。
+    private var itemRect: NSRect?
 
     /// 悬停的意图延时。鼠标只是从菜单栏扫过时不该弹面板。
     private var hoverTask: Task<Void, Never>?
@@ -24,11 +36,27 @@ final class StatusItemController: NSObject {
     /// 要让他能把鼠标移到别处（比如去复制一段错误信息）而面板还在。
     private var isPinned = false
 
+    /// 固定打开期间监听"点在面板外"和 Esc 的事件监视器。
+    /// Esc 只在应用本来就在前台时收得到 —— 面板不抢激活，键盘事件不归我们。
+    private var dismissMonitors: [Any] = []
+
     init(model: AppModel) {
         self.model = model
+
+        anchor = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
+        anchor.isOpaque = false
+        anchor.backgroundColor = .clear
+        anchor.hasShadow = false
+        anchor.ignoresMouseEvents = true
+        anchor.level = .statusBar
+        anchor.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        anchor.isReleasedWhenClosed = false
+
         super.init()
 
-        popover.behavior = .transient
+        // 不用 `.transient`：macOS 26 上点击图标这一下会被判成"点了面板外面"，
+        // 面板刚弹出就被收回。关闭时机全部自己管。
+        popover.behavior = .applicationDefined
         // 悬停面板要跟手。淡入动画会让快速划过菜单栏时留下一串残影。
         popover.animates = false
         popover.contentViewController = NSHostingController(
@@ -53,6 +81,8 @@ final class StatusItemController: NSObject {
         guard statusItem == nil else { return }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 重建状态项时保住它在菜单栏里的位置。
+        item.autosaveName = "VPSQuota"
         statusItem = item
 
         guard let button = item.button else { return }
@@ -69,10 +99,24 @@ final class StatusItemController: NSObject {
         )
         button.addTrackingArea(area)
         trackingArea = area
+
+        if screenObserver == nil {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.scheduleReinstall() }
+            }
+        }
     }
 
     private func uninstall() {
         hide()
+        removeStatusItem()
+    }
+
+    private func removeStatusItem() {
         if let item = statusItem {
             if let button = item.button, let area = trackingArea {
                 button.removeTrackingArea(area)
@@ -81,6 +125,21 @@ final class StatusItemController: NSObject {
         }
         trackingArea = nil
         statusItem = nil
+    }
+
+    /// 换一个新窗口：旧窗口的 frame 一旦过期就不会再自己恢复。
+    /// 显示器刚重连时系统还在重排菜单栏，稍等再建；短时间内不重复建，免得图标反复闪。
+    private func scheduleReinstall() {
+        guard statusItem != nil, Date().timeIntervalSince(lastReinstall) > 10 else { return }
+        reinstallTask?.cancel()
+        reinstallTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self, self.statusItem != nil else { return }
+            self.lastReinstall = Date()
+            self.removeStatusItem()
+            self.install()
+            self.updateButton()
+        }
     }
 
     private func updateButton() {
@@ -131,6 +190,39 @@ final class StatusItemController: NSObject {
         }
     }
 
+    // MARK: - 图标的位置
+
+    /// 以"鼠标此刻就在图标上"为前提刷新 `itemRect`，只在 entered 和点击时调用。
+    ///
+    /// 按钮窗口报的矩形只有鼠标确实落在其中时才可信。显示器睡眠/重连后它会停在旧坐标
+    /// （日志里见过 1920×1080 空间里的位置），照它定位面板会跑到屏幕中间。
+    /// 不可信就以鼠标为中心、按钮宽度为宽，贴着菜单栏重建一个，并换一个新窗口。
+    private func resolveItemRect() {
+        guard let button = statusItem?.button else { return }
+        let point = NSEvent.mouseLocation
+
+        if let window = button.window {
+            let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+            if rect.insetBy(dx: -2, dy: -8).contains(point) {
+                itemRect = rect
+                return
+            }
+        }
+
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else {
+            return
+        }
+        let height = NSStatusBar.system.thickness
+        let width = button.bounds.width
+        itemRect = NSRect(x: point.x - width / 2, y: screen.frame.maxY - height, width: width, height: height)
+        scheduleReinstall()
+    }
+
+    private var pointerIsOverItem: Bool {
+        // 菜单栏底边和面板顶边之间有几个点的缝，鼠标穿过时不该被判成"已离开"。
+        itemRect?.insetBy(dx: -2, dy: -8).contains(NSEvent.mouseLocation) ?? false
+    }
+
     // MARK: - 悬停与点击
 
     // 必须显式写死 selector。Swift 给 `mouseEntered(with:)` 自动生成的 @objc 名字是
@@ -138,6 +230,7 @@ final class StatusItemController: NSObject {
     // 而 AppKit 向 NSTrackingArea 的 owner 发的是 `mouseEntered:` —— 名字对不上
     // 就静默收不到任何悬停事件，点击却照常工作，极难看出问题出在哪。
     @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {
+        resolveItemRect()
         hoverTask?.cancel()
         hoverTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(200))
@@ -147,6 +240,8 @@ final class StatusItemController: NSObject {
     }
 
     @objc(mouseExited:) func mouseExited(with event: NSEvent) {
+        // 窗口 frame 过期时 AppKit 会紧跟 entered 补一个假的 exited，鼠标其实还在图标上。
+        guard !pointerIsOverItem else { return }
         hoverTask?.cancel()
         hoverTask = nil
         scheduleAutoClose()
@@ -156,23 +251,28 @@ final class StatusItemController: NSObject {
         if popover.isShown && isPinned {
             hide()
         } else {
+            resolveItemRect()
             show(pinned: true)
         }
     }
 
     private func show(pinned: Bool) {
-        guard let button = statusItem?.button else { return }
+        guard let rect = itemRect else { return }
 
         if !popover.isShown {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            anchor.setFrame(rect, display: false)
+            anchor.orderFrontRegardless()
+            guard let view = anchor.contentView else { return }
+            popover.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
         }
 
         if pinned {
             isPinned = true
             closeTimer?.invalidate()
             closeTimer = nil
-            // 只有点击进来才抢焦点。悬停时激活应用会打断用户正在别处的输入。
-            NSApp.activate(ignoringOtherApps: true)
+            installDismissMonitors()
+            // 刻意不 NSApp.activate：激活会把压在后面的主窗口一起顶到前面，
+            // 而面板里没有任何需要键盘焦点的东西。
         } else {
             scheduleAutoClose()
         }
@@ -184,8 +284,62 @@ final class StatusItemController: NSObject {
         closeTimer?.invalidate()
         closeTimer = nil
         isPinned = false
+        removeDismissMonitors()
         popover.performClose(nil)
+        anchor.orderOut(nil)
     }
+
+    // MARK: - 固定打开后的关闭
+
+    private func installDismissMonitors() {
+        guard dismissMonitors.isEmpty else { return }
+        let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { _ in
+            Task { @MainActor [weak self] in self?.hideIfClickedOutside() }
+        }) {
+            dismissMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: clicks.union(.keyDown), handler: { event in
+            // NSEvent 不是 Sendable，先把要用的字段取出来再进主线程闭包。
+            // keyCode 只能对键盘事件读，对鼠标事件读会抛异常、把这次点击吞掉。
+            let isKeyDown = event.type == .keyDown
+            let keyCode: UInt16 = isKeyDown ? event.keyCode : 0
+            let consumed = MainActor.assumeIsolated { [weak self] () -> Bool in
+                guard let self else { return false }
+                if isKeyDown {
+                    guard keyCode == 53 else { return false }   // Esc
+                    self.hide()
+                    return true
+                }
+                // 等这一下点击先送到目标窗口（比如配置窗口的关闭按钮）再关面板，
+                // 同步关会改变窗口层级，把点击吃掉。
+                Task { @MainActor in self.hideIfClickedOutside() }
+                return false
+            }
+            return consumed ? nil : event
+        }) {
+            dismissMonitors.append(local)
+        }
+    }
+
+    private func removeDismissMonitors() {
+        dismissMonitors.forEach { NSEvent.removeMonitor($0) }
+        dismissMonitors.removeAll()
+    }
+
+    private func hideIfClickedOutside() {
+        guard popover.isShown else { return }
+        let point = NSEvent.mouseLocation
+        if let window = popover.contentViewController?.view.window, window.frame.contains(point) {
+            return
+        }
+        // 点在图标上交给 handleClick 做开关，这里不抢。
+        guard !pointerIsOverItem else { return }
+        hide()
+    }
+
+    // MARK: - 悬停打开后的关闭
 
     /// 悬停打开的面板靠轮询鼠标位置来关闭。
     ///
@@ -214,17 +368,10 @@ final class StatusItemController: NSObject {
     }
 
     private var pointerIsOverPanel: Bool {
-        let point = NSEvent.mouseLocation
-
-        // 菜单栏底边和面板顶边之间有几个点的缝，鼠标穿过时不该被判成"已离开"。
         if let window = popover.contentViewController?.view.window,
-           window.frame.insetBy(dx: -8, dy: -8).contains(point) {
+           window.frame.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation) {
             return true
         }
-        if let button = statusItem?.button, let window = button.window {
-            let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
-            if rect.insetBy(dx: -2, dy: -8).contains(point) { return true }
-        }
-        return false
+        return pointerIsOverItem
     }
 }
