@@ -1,0 +1,16 @@
+# 本地代码签名身份。复制成 signing-identity.local 后填入你自己的值。
+# signing-identity.local 已在 .gitignore 里，不会进版本库。
+#
+# 作用：ad-hoc 签名（默认）的 designated requirement 会退化成 cdhash，
+# 每次重编都变，钥匙串里那条「允许本应用访问」的 ACL 随之失效，
+# 于是每次重编后首次启动都要重新授权一次。改用固定证书签名后
+# DR 只认 bundle id + 证书，重编不再影响，授权一次长期有效。
+#
+# 填证书的 SHA-1，而不是证书名 —— 钥匙串里同名证书常常不止一张
+# （过期或吊销的旧证书还留着），按名字匹配 codesign 会报 ambiguous 直接失败。
+#
+# 查看本机可用身份：
+#   security find-identity -v -p codesigning
+#
+# 然后把下面这行的指纹换成你自己的：
+# 0000000000000000000000000000000000000000

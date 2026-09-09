@@ -20,6 +20,8 @@ usage.sqlite*
 secrets.bin
 
 # ── 凭据（永远不该出现在仓库里）────────────────
+# 本机代码签名身份：证书指纹与持有人绑定，公开仓库里不该有
+macos/scripts/signing-identity.local
 *.pem
 id_rsa*
 id_ed25519*

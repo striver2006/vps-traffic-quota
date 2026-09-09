@@ -112,9 +112,52 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> 临时签名"
-# 本地自用无需开发者证书；ad-hoc 签名足以让 Keychain 访问在重启后保持稳定。
-codesign --force --deep --sign - "$APP_DIR"
+echo "==> 代码签名"
+# 必须用固定的开发者证书签，不能用 ad-hoc（--sign -）。
+#
+# 钥匙串里「允许本应用访问」那条 ACL 记的是应用的 designated requirement。
+# ad-hoc 签名不内嵌任何 requirement，DR 只能退化成 cdhash —— 而 cdhash 随二进制
+# 逐字节变化，每次重编都是一个"新应用"，ACL 立刻失效，于是每次重编后启动
+# 都被钥匙串弹框拦住要重新授权。用证书签名后 DR 变成
+# 「bundle id + Apple 根 + 这张证书」，重编不影响，授权一次就一直有效。
+#
+# 用谁的证书不写死在这里：这是公开仓库，证书指纹和持有人姓名都不该进版本库，
+# 而且别人克隆下来也用不了我的证书。按优先级取，取到哪个算哪个：
+#   1. 环境变量 CODESIGN_IDENTITY
+#   2. scripts/signing-identity.local —— 本机私有，已在 .gitignore 里
+#   3. "-"，即 ad-hoc。缺证书不该让构建失败，
+#      代价只是回到"每次重编都要重新授权钥匙串"。
+#
+# 值建议填证书的 SHA-1 而不是证书名：钥匙串里同名证书往往不止一张
+# （旧的过期/吊销的还留着），按名字匹配 codesign 会报 ambiguous 直接失败。
+# 用 `security find-identity -v -p codesigning` 查看本机可用身份。
+IDENTITY_FILE="$ROOT/scripts/signing-identity.local"
+if [ -z "${CODESIGN_IDENTITY:-}" ] && [ -f "$IDENTITY_FILE" ]; then
+    # 取第一个非空非注释行
+    CODESIGN_IDENTITY="$(grep -vE '^[[:space:]]*(#|$)' "$IDENTITY_FILE" | head -1 | tr -d '[:space:]')"
+fi
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+
+if [ "$CODESIGN_IDENTITY" != "-" ] \
+    && ! security find-identity -v -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
+    echo "    ⚠️  本机找不到指定的签名身份，退回 ad-hoc 签名"
+    echo "       （每次重编后首次启动都会被钥匙串弹框拦一次）"
+    CODESIGN_IDENTITY="-"
+fi
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+    echo "    ad-hoc 签名。想免掉重复授权，见 scripts/signing-identity.local.example"
+fi
+
+# 没有嵌套 bundle（SwiftPM 这个包不产出 .bundle 资源），不需要也不该用 --deep。
+# --timestamp=none：本地自用不做公证，不必为时间戳去连 Apple 的服务器，
+# 顺带让断网时也能构建。
+codesign --force --timestamp=none --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+codesign --verify --strict "$APP_DIR"
+
+if [ "$CODESIGN_IDENTITY" != "-" ]; then
+    echo "    签名身份：$(codesign -dvv "$APP_DIR" 2>&1 | grep '^Authority=' | head -1 | cut -d= -f2-)"
+    echo "    Team ID：  $(codesign -dvv "$APP_DIR" 2>&1 | grep '^TeamIdentifier=' | cut -d= -f2-)"
+fi
 
 echo ""
 echo "✅ 已生成：$APP_DIR"
