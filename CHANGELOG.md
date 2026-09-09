@@ -30,6 +30,9 @@
   与菜单上的数字保持一致
 - macOS 菜单栏项改由自建的 `NSStatusItem` 实现（原先是 SwiftUI 的 `MenuBarExtra`）——
   `MenuBarExtra` 只响应点击，拿不到状态项按钮就无法追踪鼠标悬停
+- **macOS 版可经 Apple 公证分发**：`NOTARIZE=1 ./scripts/build-app.sh` 会自动完成
+  签名、公证与票据装订，下载到的 .app 不再被 Gatekeeper 以「无法验证开发者」拦下。
+  构建默认启用 hardened runtime
 
 ## [1.0.0] - 2026-09-08
 

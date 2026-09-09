@@ -138,8 +138,13 @@ if [ -z "${CODESIGN_IDENTITY:-}" ] && [ -f "$IDENTITY_FILE" ]; then
 fi
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
+# 先把输出接进变量再匹配，不要写成 `... | grep -q`：本脚本开了 pipefail，
+# 而 grep -q 一匹配就退出，上游命令随即吃到 SIGPIPE(141)，
+# 整条管道被判成失败 —— 匹配成功反而进错误分支，这里就会误判成
+# "证书找不到" 而静默退回 ad-hoc 签名。
+AVAILABLE_IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
 if [ "$CODESIGN_IDENTITY" != "-" ] \
-    && ! security find-identity -v -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
+    && ! grep -q "$CODESIGN_IDENTITY" <<<"$AVAILABLE_IDENTITIES"; then
     echo "    ⚠️  本机找不到指定的签名身份，退回 ad-hoc 签名"
     echo "       （每次重编后首次启动都会被钥匙串弹框拦一次）"
     CODESIGN_IDENTITY="-"
@@ -149,14 +154,74 @@ if [ "$CODESIGN_IDENTITY" = "-" ]; then
 fi
 
 # 没有嵌套 bundle（SwiftPM 这个包不产出 .bundle 资源），不需要也不该用 --deep。
-# --timestamp=none：本地自用不做公证，不必为时间戳去连 Apple 的服务器，
-# 顺带让断网时也能构建。
-codesign --force --timestamp=none --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+#
+# hardened runtime 常开，不只在公证时开：公证强制要求它，日常构建也带着，
+# 才不会出现"本地跑得好好的、发版才炸"。这个应用只是用 Process 拉起
+# /usr/bin/ssh 子进程，不做 JIT、不加载第三方 dylib，无需任何豁免 entitlement。
+SIGN_ARGS=(--force --options runtime --sign "$CODESIGN_IDENTITY")
+if [ "${NOTARIZE:-0}" = "1" ]; then
+    # 公证要求签名里带安全时间戳，这一步必须联网。
+    SIGN_ARGS+=(--timestamp)
+else
+    # 本地自用不公证：跳过时间戳，构建不必联网，也快一点。
+    SIGN_ARGS+=(--timestamp=none)
+fi
+
+codesign "${SIGN_ARGS[@]}" "$APP_DIR"
 codesign --verify --strict "$APP_DIR"
 
 if [ "$CODESIGN_IDENTITY" != "-" ]; then
     echo "    签名身份：$(codesign -dvv "$APP_DIR" 2>&1 | grep '^Authority=' | head -1 | cut -d= -f2-)"
-    echo "    Team ID：  $(codesign -dvv "$APP_DIR" 2>&1 | grep '^TeamIdentifier=' | cut -d= -f2-)"
+fi
+
+# ── 公证（仅 NOTARIZE=1）────────────────────────
+# 只有要把 .app 发给别人时才需要：别人下载到的包带 quarantine 标记，
+# 没有公证票据就会被 Gatekeeper 拦下（"无法验证开发者"）。
+# 自己机器上构建出来的没有该标记，日常调试用不着，也就不必每次等这几十秒。
+if [ "${NOTARIZE:-0}" = "1" ]; then
+    echo "==> 公证"
+    NOTARY_PROFILE="${NOTARY_PROFILE:-vpsquota-notary}"
+
+    # 公证只认 Developer ID Application，Apple Development 会被直接拒，
+    # 提前拦下来，省得白等一轮上传。
+    SIGN_INFO="$(codesign -dvv "$APP_DIR" 2>&1 || true)"
+    if ! grep -q "^Authority=Developer ID Application" <<<"$SIGN_INFO"; then
+        echo "    ❌ 当前签名不是 Developer ID Application，公证必然失败。" >&2
+        echo "       用 security find-identity -v -p codesigning 找到 Developer ID 那张，" >&2
+        echo "       把指纹填进 scripts/signing-identity.local。" >&2
+        exit 1
+    fi
+
+    # 公证服务不收 .app 目录，得先打包。必须用 ditto ——
+    # zip 命令不保留符号链接和扩展属性，传上去会校验失败。
+    ZIP="$ROOT/build/$APP_NAME-notarize.zip"
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP_DIR" "$ZIP"
+
+    set +e
+    SUBMIT_LOG="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)"
+    SUBMIT_RC=$?
+    set -e
+    echo "$SUBMIT_LOG"
+    rm -f "$ZIP"
+
+    if [ "$SUBMIT_RC" -ne 0 ] || ! grep -q "status: Accepted" <<<"$SUBMIT_LOG"; then
+        echo "    ❌ 公证未通过。" >&2
+        SUBMISSION_ID="$(grep -m1 -E '^ *id: ' <<<"$SUBMIT_LOG" | awk '{print $2}')"
+        if [ -n "$SUBMISSION_ID" ]; then
+            xcrun notarytool log "$SUBMISSION_ID" --keychain-profile "$NOTARY_PROFILE" >&2 || true
+        fi
+        echo "       若报的是凭据问题，先存一次凭据（每台机器只需一次）：" >&2
+        echo "         xcrun notarytool store-credentials \"$NOTARY_PROFILE\" \\" >&2
+        echo "           --apple-id <你的 Apple ID> --team-id <你的 Team ID> \\" >&2
+        echo "           --password <App 专用密码，appleid.apple.com 生成>" >&2
+        exit 1
+    fi
+
+    # 把票据钉进 bundle：用户断网时 Gatekeeper 也能就地验证，不必回连 Apple。
+    xcrun stapler staple "$APP_DIR"
+    xcrun stapler validate "$APP_DIR"
+    echo "    Gatekeeper：$(spctl -a -vv "$APP_DIR" 2>&1 | tail -1)"
 fi
 
 echo ""

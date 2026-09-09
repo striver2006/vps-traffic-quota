@@ -86,9 +86,13 @@ cp -R build/VPSQuota.app /Applications/
 要开机自启就在「设置 → 启动」里打开「登录时启动」，它会登记到
 「系统设置 → 通用 → 登录项」，不必手工添加。
 
-> 每次重新执行 `build-app.sh`，ad-hoc 签名都会变化，macOS 因此把它当成另一个应用，
-> 首次读取钥匙串里的 Vultr API Key 时会弹出授权框 —— 点「始终允许」即可。
-> 这是未用开发者证书签名的固有行为，不影响功能。
+> 默认走 ad-hoc 签名，它不内嵌 designated requirement，macOS 只能按 cdhash 认应用；
+> 而 cdhash 每次重编都变，钥匙串里那条「允许本应用访问」的授权随之失效 ——
+> 于是每轮重编后首次读取 Vultr API Key 都会弹授权框，点「始终允许」即可。
+>
+> 嫌烦就换成固定证书签名：把证书指纹填进 `macos/scripts/signing-identity.local`
+> （见同目录 `.example`），此后重编不再重复授权。任意代码签名证书都可以，
+> 自签名的也行 —— 详见 [CONTRIBUTING.md](CONTRIBUTING.md#代码签名与公证)。
 
 #### 菜单栏图标看不到？
 

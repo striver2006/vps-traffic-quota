@@ -24,6 +24,54 @@ cd windows
 dotnet build VpsQuota.sln -c Release
 ```
 
+### 代码签名与公证
+
+`build-app.sh` 默认用 ad-hoc 签名，够本地跑，但有个副作用：ad-hoc 不内嵌
+designated requirement，系统只能按 cdhash 认这个应用，而 cdhash 每次重编都变 ——
+钥匙串里「允许本应用访问」的授权随之失效，每轮重编后首次启动都要重新授权一次。
+
+用固定证书签名就没这问题（DR 变成 bundle id + 证书，与二进制内容无关）。
+查看本机可用身份，把指纹填进 `macos/scripts/signing-identity.local`
+（该文件已 gitignore，格式见同目录 `.example`）：
+
+```bash
+security find-identity -v -p codesigning
+```
+
+也可以用环境变量临时指定：`CODESIGN_IDENTITY=<指纹> ./scripts/build-app.sh`。
+
+证书类型按用途选：
+
+| 用途 | 证书 | 说明 |
+| --- | --- | --- |
+| 只想少点授权弹框 | 任意代码签名证书，含自签名 | 钥匙串里用「证书助理」现建一张即可，有效期自定 |
+| 要把 .app 发给别人 | **Developer ID Application** | 需付费开发者账号；只有它能通过公证 |
+
+#### 公证
+
+别人下载到的 .app 带 quarantine 标记，没有公证票据会被 Gatekeeper 拦下
+（"无法验证开发者"）。自己机器上构建的没有该标记，日常调试不需要公证。
+
+发版时加 `NOTARIZE=1`，脚本会自动补上安全时间戳、上传公证、把票据钉进 bundle：
+
+```bash
+NOTARIZE=1 ./scripts/build-app.sh release
+```
+
+前提是先存一次公证凭据（每台机器只需一次，密码用 appleid.apple.com 生成的
+App 专用密码，不是 Apple ID 登录密码）：
+
+```bash
+xcrun notarytool store-credentials "vpsquota-notary" \
+  --apple-id <你的 Apple ID> --team-id <你的 Team ID> --password <App 专用密码>
+```
+
+profile 名可用 `NOTARY_PROFILE` 覆盖。
+
+> hardened runtime 是常开的，不只在公证时开 —— 公证强制要求它，日常构建也带着，
+> 才不会出现"本地跑得好好的、发版才炸"。本项目只用 `Process` 拉起 `/usr/bin/ssh`
+> 子进程，不做 JIT、不加载第三方 dylib，无需任何豁免 entitlement。
+
 > `swift test` **只会编译 `VPSQuotaCore` 和测试 target**，
 > SwiftUI 应用与 CLI 的编译错误抓不到。提 PR 前请另跑一次 `swift build`。
 
