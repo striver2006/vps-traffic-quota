@@ -113,7 +113,12 @@ public sealed class TrafficMonitor
         var now = at ?? DateTime.UtcNow;
         var result = new List<ServerStatus>();
 
-        foreach (var server in _config.Servers)
+        // 必须先快照：循环体里有 await（读库），而设置窗口会在 UI 线程上直接增删
+        // _config.Servers —— 一轮 SSH 采集要十几秒，用户完全来得及在这期间改配置，
+        // 直接 foreach 会抛 InvalidOperationException。RefreshAllAsync 已经这么做了。
+        var servers = _config.Servers.ToList();
+
+        foreach (var server in servers)
         {
             var period = BillingPeriod.Current(server.ResetDay, now);
             var days = await _store

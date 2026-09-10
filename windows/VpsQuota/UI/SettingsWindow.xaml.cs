@@ -11,6 +11,14 @@ using VpsQuota.Storage;
 public partial class SettingsWindow : Window
 {
     private readonly AppState _state;
+
+    /// <summary>
+    /// 编辑中的配置草稿。窗口自始至终只改它，点「保存」才整体提交给 <see cref="AppState"/>。
+    /// 直接改 <c>_state.Config</c> 的话，TrafficMonitor 拿的是同一个实例，
+    /// 未保存的增删立刻就生效于正在运行的采集了。
+    /// </summary>
+    private readonly AppConfig _draft;
+
     private ServerConfig? _current;
 
     /// <summary>
@@ -22,6 +30,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         _state = state;
+        _draft = state.Config.Clone();
 
         MeterBox.ItemsSource = Enum.GetValues<MeterMode>()
             .Select(m => new ChoiceItem<MeterMode>(m, m.DisplayName())).ToList();
@@ -33,7 +42,7 @@ public partial class SettingsWindow : Window
         ApiKeyBox.Password = _state.VultrApiKey;
         ConfigPathText.Text = new ConfigStore().FilePath;
 
-        SelectInterval(_state.Config.RefreshIntervalMinutes);
+        SelectInterval(_draft.RefreshIntervalMinutes);
         ReloadServerList();
         ReloadMenuBarChoices();
 
@@ -93,15 +102,15 @@ public partial class SettingsWindow : Window
         // 第一次填充时下拉里还什么都没有，选择只能从配置取；
         // 之后要以界面上的当前选择为准，否则用户改成「自动」再加一台会被弹回去。
         var current = MenuBarServerBox.SelectedItem as MenuBarChoice
-            ?? new MenuBarChoice(_state.Config.MenuBarShowsRemaining,
-                                 _state.Config.MenuBarServerId, "");
+            ?? new MenuBarChoice(_draft.MenuBarShowsRemaining,
+                                 _draft.MenuBarServerId, "");
 
         var choices = new List<MenuBarChoice>
         {
             new(false, null, "不显示（只留图标）"),
             new(true, null, "自动（用量最紧张的一台）"),
         };
-        choices.AddRange(_state.Config.Servers.Select(s =>
+        choices.AddRange(_draft.Servers.Select(s =>
             new MenuBarChoice(true, s.Id, string.IsNullOrEmpty(s.Name) ? "未命名" : s.Name)));
 
         MenuBarServerBox.ItemsSource = choices;
@@ -115,8 +124,8 @@ public partial class SettingsWindow : Window
     {
         if (MenuBarServerBox.SelectedItem is not MenuBarChoice choice) return;
 
-        _state.Config.MenuBarShowsRemaining = choice.Shows;
-        if (choice.Shows) _state.Config.MenuBarServerId = choice.Id;
+        _draft.MenuBarShowsRemaining = choice.Shows;
+        if (choice.Shows) _draft.MenuBarServerId = choice.Id;
     }
 
     // MARK: 页面导航
@@ -160,12 +169,23 @@ public partial class SettingsWindow : Window
     private void ReloadServerList()
     {
         var selectedId = _current?.Id;
-        ServerList.ItemsSource = _state.Config.Servers
-            .Select(s => new ServerListItem(s))
-            .ToList();
 
-        ServerList.SelectedItem = ((List<ServerListItem>)ServerList.ItemsSource)
-            .FirstOrDefault(i => i.Server.Id == selectedId);
+        // 重设 ItemsSource 会让 ListBox 丢掉选中项并触发一次 SelectionChanged，
+        // 那条路径上的 CommitForm() 会把「表单里还留着的上一台的文本」写进当前的 _current。
+        // 新增服务器时 _current 已经指向新建那台，于是新机器的字段被上一台整个覆盖。
+        // 这里用 _loading 把这段过渡期屏蔽掉（CommitForm 已有 _loading 早退条件）。
+        var wasLoading = _loading;
+        _loading = true;
+        try
+        {
+            ServerList.ItemsSource = _draft.Servers
+                .Select(s => new ServerListItem(s))
+                .ToList();
+
+            ServerList.SelectedItem = ((List<ServerListItem>)ServerList.ItemsSource)
+                .FirstOrDefault(i => i.Server.Id == selectedId);
+        }
+        finally { _loading = wasLoading; }
     }
 
     private sealed record ServerListItem(ServerConfig Server)
@@ -250,16 +270,19 @@ public partial class SettingsWindow : Window
             QuotaBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var quota)
             ? Math.Max(0, quota) : 0;
 
+        // ResetDay 必须先写回：下面算账期戳要用它。放在后面的话，用户在同一次编辑里
+        // 既改重置日又填起始已用量时，基准会被绑到「旧重置日」算出的账期起始日，
+        // AppliesTo 恒为 false，补偿静默失效 —— 用户只会觉得数字对不上面板。
+        if (MeterBox.SelectedItem is ChoiceItem<MeterMode> meter) _current.MeterMode = meter.Value;
+        if (UnitBox.SelectedItem is ChoiceItem<UnitBase> unit) _current.UnitBase = unit.Value;
+        if (ResetDayBox.SelectedItem is ChoiceItem<int> day) _current.ResetDay = day.Value;
+
         var baselineGB = double.TryParse(
             BaselineBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var bl)
             ? Math.Max(0, bl) : 0;
         _current.UsageBaseline = baselineGB > 0
             ? new UsageBaseline { PeriodStart = CurrentPeriodStart(_current), UsedGB = baselineGB }
             : null;
-
-        if (MeterBox.SelectedItem is ChoiceItem<MeterMode> meter) _current.MeterMode = meter.Value;
-        if (UnitBox.SelectedItem is ChoiceItem<UnitBase> unit) _current.UnitBase = unit.Value;
-        if (ResetDayBox.SelectedItem is ChoiceItem<int> day) _current.ResetDay = day.Value;
     }
 
     /// <summary>该服务器当前账期的起始日，用于把基准绑定到具体账期。</summary>
@@ -291,12 +314,16 @@ public partial class SettingsWindow : Window
             SshUser = provider == ProviderKind.Ssh ? "root" : null,
         };
 
-        _state.Config.Servers.Add(server);
+        _draft.Servers.Add(server);
         _current = server;
         ReloadServerList();
         ReloadMenuBarChoices();
         ServerList.SelectedItem = ((List<ServerListItem>)ServerList.ItemsSource)
             .First(i => i.Server.Id == server.Id);
+        // 显式把新对象的默认值填进表单，不依赖 SelectionChanged 的时序：
+        // 上面那次赋值通常选中的就是 ReloadServerList 里已经选好的同一个实例，
+        // WPF 判等后不会再发事件，表单也就不会被刷新。
+        LoadForm();
     }
 
     private void OnRemoveClick(object sender, RoutedEventArgs e)
@@ -308,10 +335,10 @@ public partial class SettingsWindow : Window
             "VPS 流量", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (answer != MessageBoxResult.OK) return;
 
-        _state.Config.Servers.RemoveAll(s => s.Id == _current.Id);
+        _draft.Servers.RemoveAll(s => s.Id == _current.Id);
         // 删掉的正好是托盘在显示的那台时把指向清掉，
         // 否则配置里会留下一个悬空 ID，看不出托盘为什么换了一台。
-        if (_state.Config.MenuBarServerId == _current.Id) _state.Config.MenuBarServerId = null;
+        if (_draft.MenuBarServerId == _current.Id) _draft.MenuBarServerId = null;
         _current = null;
         ReloadServerList();
         ReloadMenuBarChoices();
@@ -322,18 +349,15 @@ public partial class SettingsWindow : Window
     {
         if (_current is null) return;
 
+        // 只把表单收回草稿即可 —— 测的就是草稿里这台的当前值。
+        // 刻意不落盘：「测试连接」不该顺手把整份编辑提交掉。
         CommitForm();
-        _state.VultrApiKey = ApiKeyBox.Password;
-        _state.Config.RefreshIntervalMinutes = SelectedInterval();
-        CommitMenuBarChoice();
-        // 测试前先落盘，否则测的是编辑前的旧值。
-        _state.SaveConfig();
 
         TestButton.IsEnabled = false;
         TestResult.Text = "测试中…";
         TestResult.Foreground = Theme.Unknown;
 
-        var error = await _state.TestServerAsync(_current);
+        var error = await _state.TestServerAsync(_current, ApiKeyBox.Password);
 
         TestButton.IsEnabled = true;
         if (error is null)
@@ -351,10 +375,11 @@ public partial class SettingsWindow : Window
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         CommitForm();
-        _state.VultrApiKey = ApiKeyBox.Password;
-        _state.Config.RefreshIntervalMinutes = SelectedInterval();
+        _draft.RefreshIntervalMinutes = SelectedInterval();
         CommitMenuBarChoice();
-        _state.SaveConfig();
+        // 传副本：直接给 _draft 的话，保存后草稿与 _state.Config 就是同一个对象了 ——
+        // 登记开机自启失败时窗口不关，之后的编辑会又直接改到正在生效的配置上。
+        _state.ApplyConfig(_draft.Clone(), ApiKeyBox.Password);
         // 登记失败时不关窗，否则那条错误提示刚显示出来就随窗口一起消失了。
         if (!CommitLaunchAtLogin()) return;
         Close();

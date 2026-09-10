@@ -38,7 +38,6 @@ struct MenuBarView: View {
             footer
         }
         .frame(width: 320)
-        .task { await model.start() }
     }
 
     private var header: some View {

@@ -117,6 +117,15 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // 读不出来时把话说明白：这里显示的空白不代表钥匙串里是空的，
+                // 而且本次不会去动它 —— 否则用户会以为 Key 丢了而重新去 Vultr 生成一个。
+                if model.keychainUnavailable {
+                    Text("暂时读不到钥匙串（可能是登录时启动、尚未解锁，或授权被拒绝）。上面这一栏因此是空的，但已保存的 Key 不会被改动；留空关闭本窗口是安全的。要更换密钥，直接填入新值即可。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } header: {
                 Text("Vultr 凭据")
             }

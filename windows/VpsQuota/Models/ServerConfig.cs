@@ -1,5 +1,6 @@
 namespace VpsQuota.Models;
 
+using System.Linq;
 using System.Text.Json.Serialization;
 
 /// <summary>
@@ -60,6 +61,7 @@ public sealed class AppConfig
     /// <summary>自动刷新周期（分钟）。UI 提供 15 / 60 / 360 / 1440 四档。</summary>
     public int RefreshIntervalMinutes { get; set; } = 60;
 
+    [JsonConverter(typeof(TolerantServerListConverter))]
     public List<ServerConfig> Servers { get; set; } = new();
 
     /// <summary>
@@ -77,6 +79,22 @@ public sealed class AppConfig
     /// Windows 托盘右键菜单不再显示那行摘要。
     /// </summary>
     public bool MenuBarShowsRemaining { get; set; } = true;
+
+    /// <summary>
+    /// 深拷贝一份，供设置窗口当草稿编辑。
+    /// </summary>
+    /// <remarks>
+    /// 设置窗口以前直接改 <see cref="AppState.Config"/> 这个实例，而 TrafficMonitor 拿的是同一个
+    /// 对象 —— 于是"还没保存"的改动已经生效于正在运行的采集：删掉的服务器立刻不再被采集、
+    /// 新加的立刻开始被采集，只是没写进 config.json，重启后又"复活"。改成编辑副本、保存时整体提交。
+    /// </remarks>
+    public AppConfig Clone() => new()
+    {
+        RefreshIntervalMinutes = RefreshIntervalMinutes,
+        MenuBarServerId = MenuBarServerId,
+        MenuBarShowsRemaining = MenuBarShowsRemaining,
+        Servers = Servers.Select(s => s.Clone()).ToList(),
+    };
 }
 
 /// <summary>账期内的「起始已用量」基准。</summary>

@@ -52,12 +52,16 @@ public partial class MainWindow : Window
     {
         if (status is null)
         {
+            // 两列都要藏：右栏是另一个 StackPanel，只藏左栏的话
+            // 删掉最后一台服务器后，右侧还挂着那台的账期、外推和错误信息。
             DetailPanel.Visibility = Visibility.Hidden;
+            DetailSidePanel.Visibility = Visibility.Hidden;
             Chart.Update(null);
             return;
         }
 
         DetailPanel.Visibility = Visibility.Visible;
+        DetailSidePanel.Visibility = Visibility.Visible;
         DetailName.Text = status.Server.Name;
 
         DetailUsed.Text = ByteFormat.GB(status.UsedGB);

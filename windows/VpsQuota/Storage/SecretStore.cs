@@ -54,6 +54,14 @@ public static class SecretStore
         AppPaths.EnsureDirectory();
         var plain = JsonSerializer.SerializeToUtf8Bytes(values);
         var encrypted = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser);
-        File.WriteAllBytes(AppPaths.SecretFile, encrypted);
+
+        // 原子写入：先写临时文件再替换，与 ConfigStore.Save 保持一致。
+        // 直接覆写的话，写到一半崩溃会留下半个密文文件，下次 Unprotect 抛
+        // CryptographicException，被 Read() 当成「还没设置」—— API Key 就这么静默没了，
+        // 用户只会看到 Vultr 返回 401，完全猜不到原因。
+        var path = AppPaths.SecretFile;
+        var temp = path + ".tmp";
+        File.WriteAllBytes(temp, encrypted);
+        File.Move(temp, path, overwrite: true);
     }
 }

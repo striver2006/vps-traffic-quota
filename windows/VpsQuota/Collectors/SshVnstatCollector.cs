@@ -167,6 +167,13 @@ public sealed class SshVnstatCollector : ICollector
         if (string.IsNullOrEmpty(host))
             throw CollectException.Misconfigured($"服务器「{server.Name}」未填写 SSH 地址");
 
+        // 以 '-' 开头的地址会被 ssh 当成选项解析（例如 -oProxyCommand=…），
+        // 那等于让 config.json 决定本机执行什么命令。配置文件是明文、且鼓励在机器间拷贝，
+        // 不能假定它可信，所以这里直接拒绝。
+        if (host.StartsWith('-'))
+            throw CollectException.Misconfigured(
+                $"服务器「{server.Name}」的 SSH 地址不能以「-」开头：{host}");
+
         var args = new List<string>
         {
             // 禁止一切交互式提问：缺密钥、host key 变更等情况要立刻失败并报错，
@@ -191,6 +198,8 @@ public sealed class SshVnstatCollector : ICollector
 
         var user = server.SshUser?.Trim() ?? "";
         var target = string.IsNullOrEmpty(user) ? host : $"{user}@{host}";
+        // "--" 终结选项解析，此后的参数一律当作目标和命令，双保险。
+        args.Add("--");
         args.Add(target);
         args.Add(command);
 

@@ -38,6 +38,10 @@ public sealed class SqliteStore : IAsyncDisposable
         using var command = _connection.CreateCommand();
         command.CommandText = """
             PRAGMA journal_mode = WAL;
+            -- 诊断用的 CLI 与本应用可能同时开着同一个库（README 就是这么建议排查的）。
+            -- 没有 busy handler 时，SQLite 撞上锁会立刻返回 SQLITE_BUSY，
+            -- 一次本来成功的采集就被记成失败、数据也丢了。等 5 秒足够让对方写完。
+            PRAGMA busy_timeout = 5000;
             CREATE TABLE IF NOT EXISTS daily_usage (
                 server_id TEXT    NOT NULL,
                 day       TEXT    NOT NULL,

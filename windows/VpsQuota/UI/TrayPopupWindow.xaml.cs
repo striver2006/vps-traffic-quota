@@ -1,6 +1,10 @@
 namespace VpsQuota.UI;
 
+// Runtime.InteropServices / Windows.Interop 都必须显式 using：
+// XamlPreCompile 生成的 wpftmp 项目不继承 ImplicitUsings，见 csproj 里的说明。
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using VpsQuota.Core;
 
 /// <summary>
@@ -43,8 +47,10 @@ public partial class TrayPopupWindow : Window
         Rows.ItemsSource = rows;
         EmptyPanel.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        FatalText.Text = _state.FatalError ?? "";
-        FatalText.Visibility = _state.FatalError is null ? Visibility.Collapsed : Visibility.Visible;
+        // 启动期的致命错误优先；没有的话再显示最近一次整体性刷新故障。
+        var fatal = _state.FatalError ?? _state.RefreshError;
+        FatalText.Text = fatal ?? "";
+        FatalText.Visibility = fatal is null ? Visibility.Collapsed : Visibility.Visible;
 
         StatusText.Text = _state.IsRefreshing
             ? "正在采集…"
@@ -66,9 +72,110 @@ public partial class TrayPopupWindow : Window
 
         Show();
         // Measure 出来的尺寸和真正排完版的可能差几个像素，落定后再校准一次。
+        // 这一次走物理像素：窗口已经有 HWND 了，可以直接问系统"托盘在哪块屏"，
+        // 绕开 WPF 逻辑单位在多显示器混合缩放下的换算问题。
         UpdateLayout();
-        MoveToTrayCorner(ActualWidth, ActualHeight);
+        if (!SnapToTrayCornerNative()) MoveToTrayCorner(ActualWidth, ActualHeight);
     }
+
+    /// <summary>
+    /// 用物理像素把窗口贴到<b>托盘所在那块屏</b>的角上。成功返回 true。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SystemParameters.WorkArea"/> 只返回主显示器的工作区 ——
+    /// 任务栏在副屏时，按它算出来的位置会把面板甩到主屏角落。
+    /// 这里改用指针所在的显示器（悬停触发时指针必定在托盘图标上），
+    /// 并且全程用物理像素 + SetWindowPos，与 App 里那个低级鼠标钩子的坐标口径一致。
+    /// </remarks>
+    private bool SnapToTrayCornerNative()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return false;
+        if (!GetCursorPos(out var cursor)) return false;
+
+        var monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        if (monitor == IntPtr.Zero) return false;
+
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) return false;
+        if (!GetWindowRect(hwnd, out var window)) return false;
+
+        var width = window.Right - window.Left;
+        var height = window.Bottom - window.Top;
+        var work = info.Work;
+        var full = info.Monitor;
+        const int gap = 2;
+
+        int left, top;
+        // 与 MoveToTrayCorner 同一套推断：工作区哪条边被推进来，任务栏就在哪一侧。
+        if (work.Top > full.Top)
+        {
+            left = work.Right - width - gap;
+            top = work.Top + gap;
+        }
+        else if (work.Left > full.Left)
+        {
+            left = work.Left + gap;
+            top = work.Bottom - height - gap;
+        }
+        else
+        {
+            left = work.Right - width - gap;
+            top = work.Bottom - height - gap;
+        }
+
+        left = Math.Clamp(left, work.Left, Math.Max(work.Left, work.Right - width));
+        top = Math.Clamp(top, work.Top, Math.Max(work.Top, work.Bottom - height));
+
+        return SetWindowPos(hwnd, IntPtr.Zero, left, top, 0, 0,
+                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(NativePoint point, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(
+        IntPtr window, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
 
     /// <summary>
     /// 把窗口挪到任务栏通知区域所在的那个屏幕角。

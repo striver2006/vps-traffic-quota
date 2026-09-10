@@ -41,6 +41,12 @@ public actor SQLiteStore {
             throw StoreError.open(msg)
         }
         self.db = handle
+
+        // 诊断用的 CLI 与图形界面可能同时开着同一个库（README 就是这么建议排查的）。
+        // 没有 busy handler 时，SQLite 撞上锁会立刻返回 SQLITE_BUSY，
+        // upsert 的 BEGIN IMMEDIATE 直接失败 —— 一次本来成功的采集被记成失败、数据也丢了。
+        sqlite3_busy_timeout(handle, 5_000)
+
         try Self.migrate(handle)
     }
 

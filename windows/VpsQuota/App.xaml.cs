@@ -1,6 +1,9 @@
 namespace VpsQuota;
 
 using System.Drawing;
+// Mutex / CancellationToken 在 System.Threading 里。必须显式 using：
+// XamlPreCompile 生成的 wpftmp 项目不继承 ImplicitUsings，见 csproj 里的说明。
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using VpsQuota.Models;
@@ -15,6 +18,23 @@ public partial class App : Application
     private AppState? _state;
     private Forms.NotifyIcon? _tray;
     private Icon? _currentIcon;
+
+    /// <summary>单实例闸门。第二次启动时拿不到它，说明已经有一个在跑。</summary>
+    private Mutex? _singleInstance;
+
+    /// <summary>
+    /// 接收唤起广播的隐藏窗口。刻意是普通的顶层窗口而不是 message-only 窗口 ——
+    /// HWND_BROADCAST 只送到顶层窗口，message-only 的收不到。
+    /// </summary>
+    private System.Windows.Interop.HwndSource? _messageSink;
+
+    /// <summary>
+    /// 唤起已有实例用的广播消息。Windows 常把新来的托盘图标塞进溢出区，
+    /// 用户找不到图标就再双击一次 exe —— 那样只会起第二个进程，
+    /// 两套定时器、两个连接同时写同一个 SQLite。这里把它变成"把主窗口拿出来"。
+    /// </summary>
+    private static readonly uint ShowMainMessage =
+        RegisterWindowMessage("VpsQuota.ShowMainWindow.9C1E4F");
 
     /// <summary>悬停时浮出的面板。取代了系统 tooltip，一直复用同一个实例。</summary>
     private TrayPopupWindow? _popup;
@@ -63,9 +83,27 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // 未捕获异常至少要能说明原因，而不是让进程无声消失。
+        DispatcherUnhandledException += (_, args) =>
+        {
+            MessageBox.Show($"发生了未处理的错误：\n\n{args.Exception.Message}",
+                "VPS 流量", MessageBoxButton.OK, MessageBoxImage.Error);
+            args.Handled = true;
+        };
+
+        _singleInstance = new Mutex(initiallyOwned: true, "VpsQuota.SingleInstance", out var isFirst);
+        if (!isFirst)
+        {
+            // 已经有一个在跑：让它把主窗口拿到前面来，自己安静退出。
+            PostMessage(HWND_BROADCAST, ShowMainMessage, IntPtr.Zero, IntPtr.Zero);
+            Shutdown();
+            return;
+        }
+
         _state = new AppState();
         _state.StatusesChanged += UpdateTray;
 
+        InstallMessageSink();
         SetupTray();
 
         if (_state.FatalError is { } fatal)
@@ -77,6 +115,27 @@ public partial class App : Application
         if (_state.Config.Servers.Count == 0) _state.ShowSettings();
 
         await _state.StartAsync();
+    }
+
+    /// <summary>装上接收「唤起主窗口」广播的隐藏窗口。</summary>
+    private void InstallMessageSink()
+    {
+        var parameters = new System.Windows.Interop.HwndSourceParameters("VpsQuotaMessageSink")
+        {
+            Width = 0,
+            Height = 0,
+            WindowStyle = 0,
+        };
+        _messageSink = new System.Windows.Interop.HwndSource(parameters);
+        _messageSink.AddHook((IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled) =>
+        {
+            if ((uint)msg == ShowMainMessage)
+            {
+                ShowMainWindow();
+                handled = true;
+            }
+            return IntPtr.Zero;
+        });
     }
 
     private void SetupTray()
@@ -116,6 +175,11 @@ public partial class App : Application
         // 进入靠它触发，离开靠 _hoverTimer 发现"一段时间没再收到 MouseMove"。
         _tray.MouseMove += (_, _) =>
         {
+            // 刚用点击收起固定面板时，指针多半还停在图标上，抖动 1px 就会走到这里
+            // 把面板以悬停模式重新弹出来 —— 用户看到的就是"点了关不掉"。
+            // 与 MouseClick 用同一个时间窗，让这一下点击真正生效。
+            if ((DateTime.UtcNow - _popupUnpinnedAt).TotalMilliseconds < 400) return;
+
             _lastTrayHoverAt = DateTime.UtcNow;
             _lastTrayPointerPos = Forms.Cursor.Position;
             ShowPopup();
@@ -276,7 +340,11 @@ public partial class App : Application
         {
             // 图标跟着"设置里指定要显示的那台"走，和菜单上的数字说的是同一台。
             var status = _state.MenuBarStatus;
-            var severity = _state.HasAnyError || _state.FatalError is not null
+            // 只看这一台自己的状态。以前用的是全局 HasAnyError —— 三台里有一台 SSH 不通，
+            // 指定显示的那台明明已经 92% 也会被画成灰色，
+            // "不用点开就能感知严重程度"恰恰在最需要的时候失效。
+            // 整体性故障走右键菜单的摘要行与浮窗，不再抢图标的颜色。
+            var severity = _state.FatalError is not null || status?.LastError is not null
                 ? Severity.Unknown
                 : status?.Severity ?? Severity.Unknown;
 
@@ -379,6 +447,16 @@ public partial class App : Application
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
 
+    // 单实例唤起：注册一个全应用唯一的消息号，第二个实例广播它，第一个实例收到后弹主窗口。
+    private static readonly IntPtr HWND_BROADCAST = new(0xFFFF);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet =
+        System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern uint RegisterWindowMessage(string message);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     [System.Runtime.InteropServices.StructLayout(
@@ -413,8 +491,11 @@ public partial class App : Application
             _tray.Dispose();
         }
         _currentIcon?.Dispose();
+        _messageSink?.Dispose();
 
         if (_state is not null) await _state.DisposeAsync();
+
+        _singleInstance?.Dispose();
         base.OnExit(e);
     }
 }

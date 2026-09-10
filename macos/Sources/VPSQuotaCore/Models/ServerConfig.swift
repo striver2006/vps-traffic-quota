@@ -130,14 +130,49 @@ public struct AppConfig: Codable, Sendable {
         self.menuBarShowsRemaining = menuBarShowsRemaining
     }
 
+    /// 解析时被跳过的服务器条目数。`id`/`name`/`provider` 缺失或类型不对的条目会被丢掉，
+    /// 而不是让整份配置读不出来。界面据此提示用户「有 N 台没读进来」。
+    ///
+    /// 不参与编码：它是这次解析的产物，不是配置内容本身。
+    public private(set) var skippedServerCount = 0
+
     /// 旧配置文件缺字段时的兜底，避免一次手改 JSON 就整个读不出来。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.refreshIntervalMinutes =
             try c.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 60
-        self.servers = try c.decodeIfPresent([ServerConfig].self, forKey: .servers) ?? []
+
+        // 逐条解析而不是 decode([ServerConfig].self)：后者只要有一条缺 provider，
+        // 整个数组连同其他所有正常的服务器一起读不出来 —— 而 Windows 端对这些字段
+        // 是有默认值的，于是「在 Windows 上能用的 config.json 拷到 macOS 全废」。
+        // 坏掉的那条跳过并计数，其余照常可用。
+        let decoded = try c.decodeIfPresent([FailableServer].self, forKey: .servers) ?? []
+        self.servers = decoded.compactMap(\.value)
+        self.skippedServerCount = decoded.count - self.servers.count
+
         self.menuBarServerId = try c.decodeIfPresent(String.self, forKey: .menuBarServerId)
         self.menuBarShowsRemaining =
             try c.decodeIfPresent(Bool.self, forKey: .menuBarShowsRemaining) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(refreshIntervalMinutes, forKey: .refreshIntervalMinutes)
+        try c.encode(servers, forKey: .servers)
+        try c.encodeIfPresent(menuBarServerId, forKey: .menuBarServerId)
+        try c.encode(menuBarShowsRemaining, forKey: .menuBarShowsRemaining)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case refreshIntervalMinutes, servers, menuBarServerId, menuBarShowsRemaining
+    }
+}
+
+/// 单条服务器的容错包装：解析失败时留下 nil 而不是让整个数组失败。
+private struct FailableServer: Decodable {
+    let value: ServerConfig?
+
+    init(from decoder: Decoder) throws {
+        value = try? ServerConfig(from: decoder)
     }
 }

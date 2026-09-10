@@ -42,7 +42,9 @@ struct MainWindowView: View {
                 }
             }
         }
-        .task { await model.start() }
+        // 启动流程不挂在视图上：这个 .task 会随视图每次出现重跑，而菜单栏面板
+        // 每悬停一次就是一次"出现"—— 那等于每次划过图标都重新采集一轮，
+        // 顺带把自动刷新的定时器一再往后推。改由 App.bootstrap() 调一次，见 App.swift。
         // 默认选中放在这里而不是 .task 里：start() 要等整轮采集跑完才返回，
         // 那时窗口已经空着显示了好几秒。改成本地数据一到就选中，打开即有内容。
         .onChange(of: model.statuses.count, initial: true) {

@@ -123,7 +123,8 @@
                                        VerticalAlignment="Bottom" Margin="8,0,0,6"/>
                         </StackPanel>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Margin="22,0,0,0" VerticalAlignment="Center">
+                    <StackPanel x:Name="DetailSidePanel" Grid.Column="1" Margin="22,0,0,0"
+                                VerticalAlignment="Center">
                         <TextBlock x:Name="DetailPeriod" FontSize="13"
                                    Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBlock x:Name="DetailProjection" FontSize="13" Margin="0,4,0,0"/>

@@ -1,5 +1,6 @@
 namespace VpsQuota.UI;
 
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using VpsQuota.Models;
@@ -19,6 +20,9 @@ public sealed class AppState
     private readonly TrafficMonitor? _monitor;
     private readonly DispatcherTimer _timer = new();
 
+    /// <summary>应用生命周期。退出时取消它，让在途的 ssh 进程立刻收摊而不是干等 45 秒超时。</summary>
+    private readonly CancellationTokenSource _lifetime = new();
+
     private SettingsWindow? _settingsWindow;
     private MainWindow? _mainWindow;
 
@@ -34,12 +38,29 @@ public sealed class AppState
     /// <summary>启动阶段的致命错误（例如数据库打不开），非 null 时界面只显示它。</summary>
     public string? FatalError { get; private set; }
 
+    /// <summary>
+    /// 最近一次整体性刷新故障（库写不进去、磁盘满等）。与 <see cref="FatalError"/> 分开，
+    /// 是因为它会随下一次成功刷新自动消失，而启动期的故障不该被这样冲掉。
+    /// 单台采集的失败不会走到这里 —— 那些已经在 TrafficMonitor 里被隔离到各自的 LastError 上。
+    /// </summary>
+    public string? RefreshError { get; private set; }
+
     public event Action? StatusesChanged;
 
     public AppState()
     {
         // 配置读不出来时也要能启动，让用户有机会在设置界面里修好它。
-        try { Config = _configStore.Load(); }
+        try
+        {
+            Config = _configStore.Load();
+            var skipped = _configStore.SkippedServerCount;
+            if (skipped > 0)
+            {
+                FatalError =
+                    $"配置文件里有 {skipped} 台服务器没能读入（缺少 id / name / provider，或字段类型不对），"
+                    + $"其余服务器照常工作。修好后重启即可：{_configStore.FilePath}";
+            }
+        }
         catch (Exception ex)
         {
             Config = new AppConfig();
@@ -58,7 +79,13 @@ public sealed class AppState
             FatalError = $"无法打开本地数据库：{ex.Message}";
         }
 
-        _timer.Tick += async (_, _) => await RefreshAsync();
+        // 注意别让异常从这个 async void 里逸出：未捕获异常会直接崩掉进程。
+        // RefreshAsync 内部已经自己兜住了，这里再套一层是为了防止将来改动漏掉。
+        _timer.Tick += async (_, _) =>
+        {
+            try { await RefreshAsync(); }
+            catch (Exception ex) { ReportFailure(ex); }
+        };
         ScheduleTimer();
     }
 
@@ -69,7 +96,16 @@ public sealed class AppState
     public async Task StartAsync()
     {
         if (_monitor is null) return;
-        Statuses = await _monitor.StatusesAsync();
+
+        // 先读本地数据；读不出来也要继续往下走去采集，不能让界面卡在空白上。
+        try
+        {
+            Statuses = await _monitor.StatusesAsync();
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(ex);
+        }
         StatusesChanged?.Invoke();
         await RefreshAsync();
     }
@@ -82,8 +118,20 @@ public sealed class AppState
         StatusesChanged?.Invoke();
         try
         {
-            Statuses = await _monitor.RefreshAllAsync();
+            Statuses = await _monitor.RefreshAllAsync(_lifetime.Token);
             LastRefreshAt = DateTime.UtcNow;
+            RefreshError = null;
+        }
+        catch (OperationCanceledException)
+        {
+            // 退出时主动取消的，不是故障，也不该盖掉界面上已有的数据。
+        }
+        catch (Exception ex)
+        {
+            // 单台采集失败早在 TrafficMonitor 里就被隔离了，能到这里的是整体性故障
+            // （库写不进去、磁盘满、配置在采集途中被改动）。按 S3 的约定：
+            // 报出原因，但保留上一次成功的数据，不要崩掉进程。
+            ReportFailure(ex);
         }
         finally
         {
@@ -92,17 +140,46 @@ public sealed class AppState
         }
     }
 
-    /// <summary>测试单台服务器的采集。返回 null 表示成功。</summary>
-    public async Task<string?> TestServerAsync(ServerConfig server)
+    /// <summary>把整体性故障挂到界面上。</summary>
+    private void ReportFailure(Exception ex)
+    {
+        RefreshError = $"刷新失败：{ex.Message}";
+    }
+
+    /// <summary>
+    /// 测试单台服务器的采集。返回 null 表示成功。
+    /// </summary>
+    /// <param name="apiKey">设置窗口里当前编辑中的凭据，仅本次测试使用。</param>
+    /// <remarks>
+    /// 刻意<b>不落盘、不改动正在运行的配置</b>：「测试连接」是用来验证填得对不对的，
+    /// 不该顺手把整份编辑中的配置提交掉 —— 否则用户点完测试再点 X 也放弃不了改动。
+    /// </remarks>
+    public async Task<string?> TestServerAsync(ServerConfig server, string apiKey)
     {
         if (_monitor is null) return "数据库未就绪";
 
-        // 测试用的是当前编辑中的凭据，先同步过去，否则测的还是旧 Key。
-        _monitor.SetVultrApiKey(string.IsNullOrEmpty(VultrApiKey) ? null : VultrApiKey);
-        var error = await _monitor.RefreshOneAsync(server, DateTime.UtcNow);
-        Statuses = await _monitor.StatusesAsync();
-        StatusesChanged?.Invoke();
-        return error;
+        var saved = VultrApiKey;
+        _monitor.SetVultrApiKey(string.IsNullOrEmpty(apiKey) ? null : apiKey);
+        try
+        {
+            var error = await _monitor.RefreshOneAsync(server, DateTime.UtcNow, _lifetime.Token);
+            Statuses = await _monitor.StatusesAsync();
+            StatusesChanged?.Invoke();
+            return error;
+        }
+        finally
+        {
+            // 草稿凭据只在这一次测试里有效，测完还给已保存的那个。
+            _monitor.SetVultrApiKey(string.IsNullOrEmpty(saved) ? null : saved);
+        }
+    }
+
+    /// <summary>用设置窗口编辑好的草稿整体替换当前配置并落盘。</summary>
+    public void ApplyConfig(AppConfig config, string apiKey)
+    {
+        Config = config;
+        VultrApiKey = apiKey;
+        SaveConfig();
     }
 
     public void SaveConfig()
@@ -164,7 +241,7 @@ public sealed class AppState
         window.Activate();
     }
 
-    /// <summary>用量比例最高的一台。</summary>
+    /// <summary>用量比例最高的一台。比例相同时取列表里靠前的那台（与 macOS 端口径一致）。</summary>
     public ServerStatus? MostCritical => Statuses
         .Where(s => s.UsedFraction is not null)
         .OrderByDescending(s => s.UsedFraction)
@@ -193,6 +270,16 @@ public sealed class AppState
     public async ValueTask DisposeAsync()
     {
         _timer.Stop();
+
+        // 先取消并等在途采集收敛，再关连接 —— 否则 RefreshAllAsync 可能还在用
+        // 同一个 SqliteConnection，dispose 掉它会抛 ObjectDisposedException。
+        await _lifetime.CancelAsync();
+        for (var i = 0; i < 50 && IsRefreshing; i++)
+        {
+            await Task.Delay(100).ConfigureAwait(false);
+        }
+        _lifetime.Dispose();
+
         if (_store is not null) await _store.DisposeAsync();
     }
 }

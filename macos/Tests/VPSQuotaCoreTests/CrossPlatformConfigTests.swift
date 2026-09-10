@@ -225,3 +225,60 @@ struct CrossPlatformConfigTests {
         #expect(config.refreshIntervalMinutes == 60)
     }
 }
+
+@Suite("配置解析的容错")
+struct ConfigToleranceTests {
+
+    /// Windows 端的 ServerConfig 对 id/name/provider 都有默认值，缺字段照样能跑；
+    /// macOS 端这三个是必填。以前一条坏数据会让整份配置读不出来 ——
+    /// 「在 Windows 上能用的 config.json 拷到 macOS 全废」。现在只丢坏的那条。
+    @Test("缺必填字段的条目被跳过，其余服务器仍然可用")
+    func skipsBrokenEntries() throws {
+        let json = """
+        {
+          "refreshIntervalMinutes": 60,
+          "servers": [
+            { "id": "ok-1", "name": "正常", "provider": "ssh", "quotaGB": 1000 },
+            { "name": "缺 id 和 provider", "quotaGB": 500 },
+            { "id": "ok-2", "name": "也正常", "provider": "vultr" }
+          ]
+        }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+
+        #expect(config.servers.count == 2)
+        #expect(config.servers.map(\.id) == ["ok-1", "ok-2"])
+        #expect(config.skippedServerCount == 1)
+    }
+
+    /// C# 的 int/double/bool 是非 nullable 的，旧版本会把它们以显式 null 写出来。
+    /// Swift 侧必须当成"没填"退回默认值，而不是解析失败。
+    @Test("显式 null 的字段退回默认值")
+    func explicitNullFallsBackToDefault() throws {
+        let json = """
+        {
+          "refreshIntervalMinutes": null,
+          "menuBarShowsRemaining": null,
+          "servers": [
+            {
+              "id": "s1", "name": "测试", "provider": "ssh",
+              "quotaGB": null, "resetDay": null, "unitBase": null,
+              "sshPort": null, "usageBaseline": null
+            }
+          ]
+        }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+
+        #expect(config.refreshIntervalMinutes == 60)
+        #expect(config.menuBarShowsRemaining)
+        #expect(config.skippedServerCount == 0)
+
+        let server = try #require(config.servers.first)
+        #expect(server.quotaGB == 0)
+        #expect(server.resetDay == 1)
+        #expect(server.unitBase == .binary)
+        #expect(server.sshPort == nil)
+        #expect(server.usageBaseline == nil)
+    }
+}

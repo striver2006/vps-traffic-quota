@@ -92,7 +92,9 @@ upsert 到本地之后历史可以无限累积。更实际的好处是**容错**
 
 ### 3. 计算层 —— 纯函数，全部可单测
 
-这一层没有任何 I/O，也不读墙上时钟（时间通过参数传入），所以能被完整覆盖。
+这一层没有任何 I/O，时间一律通过参数传入，所以能被完整覆盖。
+（Swift 侧几个入口给 `now` 留了 `= Date()` 默认值，纯粹是调用处的便利；
+测试和 UI 都显式传值，`ServerStatus` 里的派生量也统一以 `evaluatedAt` 为准。）
 
 **账期切分**（`BillingPeriod`）：左闭右开的 `[start, end)`。
 账单日不一定是 1 号 —— DMIT 通常是开通日，Vultr 是账号计费日 —— 所以不能按自然月统计。
@@ -142,10 +144,15 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 | 存储 | `Storage/SQLiteStore.swift` | `Storage/SqliteStore.cs` |
 | 密钥 | `Storage/KeychainStore.swift`（钥匙串） | `Storage/SecretStore.cs`（DPAPI） |
 
-改动一端的逻辑时，**对照着改另一端**。跨端一致性由两组测试兜底：
+改动一端的逻辑时，**对照着改另一端**。macOS 侧有两组测试提供部分保障：
 
 - `CrossPlatformConfigTests` —— 校验 `shared/config.example.json` 能被解析，字段名两端一致
 - `SchemaConsistencyTests` —— 校验代码建出来的表结构与 `shared/schema.sql` 逐列一致
+
+**但要清楚它们的边界**：两组测试都只跑在 macOS 端，一行 C# 代码都不碰。
+它们能保证 Swift 这一侧符合共享契约，却拦不住 C# 那一侧独自漂移 ——
+Windows 端目前没有任何自动化测试（见 CHANGELOG 的「已知限制」），
+那半边的账期切分与口径折算全靠人工对照。这是当前最大的一处结构性缺口。
 
 ### macOS 端为什么拆两个 target
 
@@ -185,5 +192,8 @@ Windows 写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（只影响当�
 而菜单栏应用需要的只是一个正确的 bundle 结构和 `Info.plist`。
 图标也用代码画（`scripts/make-icon.swift`），不往仓库里塞二进制资源。
 
-签名是 ad-hoc（`codesign --sign -`），不需要开发者证书。代价是每次重新构建签名都会变，
-macOS 会把它当成另一个应用，首次读取钥匙串时会重新弹授权框。
+签名默认走本机证书（`macos/scripts/signing-identity.local` 里填指纹，见同目录的 `.example`），
+没配置时退回 ad-hoc（`codesign --sign -`）。ad-hoc 签名不内嵌 designated requirement，
+macOS 只能按 cdhash 认应用，而 cdhash 每次重编都变 —— 钥匙串里那条授权随之失效，
+于是每轮重编后首次读取 API Key 都会重新弹授权框。填一个固定证书就没有这个问题，
+自签名的也行。`NOTARIZE=1 ./scripts/build-app.sh` 还会额外完成公证与票据装订。

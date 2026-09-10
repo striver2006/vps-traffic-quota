@@ -37,6 +37,13 @@ final class AppModel {
     /// 启动阶段的致命错误（例如数据库打不开），非 nil 时界面只显示它。
     private(set) var fatalError: String?
 
+    /// config.json 存在但解析失败。此时**拒绝保存**，免得覆盖掉还能抢救的原文件。
+    private(set) var configLoadFailed = false
+
+    /// 钥匙串读不出来（未解锁 / 被拒绝授权 / ACL 失效），与「确实没设置」不是一回事。
+    /// 该标志下不会主动删除已存的 Key。
+    private(set) var keychainUnavailable = false
+
     var config: AppConfig {
         didSet { Task { await monitor?.updateConfig(config) } }
     }
@@ -77,6 +84,10 @@ final class AppModel {
     private let configStore = ConfigStore()
     private var refreshTimer: Timer?
 
+    /// `start()` 只该跑一次。它由 `App.bootstrap()` 调用，而不是挂在视图的 `.task` 上 ——
+    /// 挂在视图上时菜单栏面板每悬停一次就会重跑一轮采集并重建定时器。
+    private var didStart = false
+
     init() {
         // 默认同时显示菜单栏图标和 Dock 图标。
         // 只用菜单栏是有风险的：菜单栏拥挤时（尤其带刘海的机型）macOS 会静默丢弃状态项，
@@ -88,8 +99,28 @@ final class AppModel {
         self.launchAtLogin = LaunchAtLogin.isEnabled
 
         // 配置读不出来时也要能启动，让用户有机会在设置界面里修好它。
-        self.config = (try? configStore.load()) ?? AppConfig()
-        self.vultrAPIKey = (try? KeychainStore.vultrAPIKey()) ?? ""
+        //
+        // 但必须分清「文件不存在」和「文件坏了」：前者是首次启动的正常情况，
+        // 后者若也当成空配置，界面会显示"还没有配置服务器"，用户以为要重配，
+        // 而任何一次保存都会把那份还能抢救的 config.json 整个覆盖掉。
+        // config.json 是用户可备份、可在两端互拷的资产（G2），不能这么对待它。
+        do {
+            self.config = try configStore.load()   // 文件不存在时返回空配置，不抛
+        } catch {
+            self.config = AppConfig()
+            self.configLoadFailed = true
+        }
+
+        // 同理：钥匙串「读到 nil」是确实没设置，「读失败」是另一回事
+        // （开机自启时钥匙串还没解锁、用户在授权框上点了拒绝、签名变更导致 ACL 失效）。
+        // 两者都吞成空串的话，用户随后开关一次设置窗口，saveConfig() 就会把
+        // 钥匙串里那条真实的 Key 当成"用户清空了"而删掉 —— 且没有任何提示。
+        do {
+            self.vultrAPIKey = try KeychainStore.vultrAPIKey() ?? ""
+        } catch {
+            self.vultrAPIKey = ""
+            self.keychainUnavailable = true
+        }
 
         do {
             let store = try SQLiteStore(path: AppPaths.databaseFile)
@@ -99,6 +130,20 @@ final class AppModel {
         } catch {
             self.fatalError = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
+        }
+
+        if config.skippedServerCount > 0 {
+            self.fatalError = """
+                配置文件里有 \(config.skippedServerCount) 台服务器没能读入（缺少 id / name / provider，或字段类型不对），\
+                其余服务器照常工作。修好后重启即可：\(configStore.fileURL.path)
+                """
+        }
+
+        if configLoadFailed {
+            self.fatalError = """
+                配置文件解析失败，已按空配置启动，且本次不会写入配置文件，以免覆盖它。
+                请先备份并修复：\(configStore.fileURL.path)
+                """
         }
     }
 
@@ -147,7 +192,8 @@ final class AppModel {
     /// 启动流程：先用本地数据把界面填满，再在后台发起真正的采集。
     /// 这样即使网络或 SSH 很慢，打开菜单也能立刻看到上次的数据。
     func start() async {
-        guard let monitor else { return }
+        guard let monitor, !didStart else { return }
+        didStart = true
         statuses = await monitor.statuses()
         scheduleTimer()
         await refresh()
@@ -171,9 +217,17 @@ final class AppModel {
     // MARK: - 配置
 
     func saveConfig() {
+        // 原文件读不出来时绝不落盘：一次写入就把用户还能抢救的配置盖掉了。
+        guard !configLoadFailed else { return }
+
         do {
             try configStore.save(config)
-            try KeychainStore.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+
+            // 钥匙串读不出来、用户又没输入新 Key 时，跳过密钥写入。
+            // 否则空串会被当成"清空"，把钥匙串里那条真实的 Key 删掉。
+            if !(keychainUnavailable && vultrAPIKey.isEmpty) {
+                try KeychainStore.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+            }
         } catch {
             fatalError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             return
@@ -218,11 +272,20 @@ final class AppModel {
 
     // MARK: - 汇总
 
-    /// 用量比例最高的一台。
+    /// 用量比例最高的一台。比例相同时取列表里靠前的那台。
+    ///
+    /// 不用 `max(by:)`：它在平局时返回**最后一个**，而 Windows 端的
+    /// `OrderByDescending().FirstOrDefault()` 返回第一个。全新的库里各台都是 0.0，
+    /// 平局是常态 —— 两端会各自指向不同的服务器，与 G2「配置拷过去表现一致」相悖。
     var mostCritical: ServerStatus? {
-        statuses
-            .filter { $0.usedFraction != nil }
-            .max { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
+        statuses.reduce(into: nil as ServerStatus?) { best, candidate in
+            guard let fraction = candidate.usedFraction else { return }
+            guard let current = best, let currentFraction = current.usedFraction else {
+                best = candidate
+                return
+            }
+            if fraction > currentFraction { best = candidate }
+        }
     }
 
     /// 菜单栏那一小块要反映的那台。

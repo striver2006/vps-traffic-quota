@@ -2,6 +2,10 @@
 
 配置文件是 macOS 与 Windows 两端**共用的同一份格式**，可以在两台机器之间直接拷贝。
 
+`id`、`name`、`provider` 三个字段两端都是必填。手写时漏掉其中之一，
+该条目会被跳过（其余服务器照常工作），界面会提示有几台没读进来。
+字段名区分大小写，两端都是严格匹配。
+
 | | 位置 |
 |---|---|
 | macOS | `~/Library/Application Support/VPSTrafficQuota/config.json` |
@@ -21,7 +25,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `refreshIntervalMinutes` | int | 自动刷新周期（分钟）。界面提供 15 / 60 / 360 / 1440 四档；手改成小于 5 的值会被强制抬到 5 |
+| `refreshIntervalMinutes` | int | 自动刷新周期（分钟）。界面提供 15 / 60 / 360 / 1440 四档；手改成小于 5 的值仍会原样留在文件里，但定时器实际按 5 分钟走 |
 | `servers` | array | 服务器列表，界面按此顺序显示 |
 | `menuBarServerId` | string \| 缺省 | 常驻区（macOS 菜单栏 / Windows 托盘）显示哪台服务器的剩余流量，取值是某台服务器的 `id`。缺省或指向一台已删除的服务器时，回退到用量比例最高的那台 |
 | `menuBarShowsRemaining` | bool | 常驻区要不要显示剩余流量的文字。`false` 时 macOS 菜单栏只剩图标、Windows 右键菜单不再有那行摘要，图标颜色照常随严重程度变化。缺省 `true` |

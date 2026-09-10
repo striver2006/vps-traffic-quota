@@ -128,5 +128,11 @@ struct VPSQuotaApp: App {
         if appDelegate.statusItem == nil {
             appDelegate.statusItem = StatusItemController(model: model)
         }
+
+        // 启动流程也放这里，而不是挂在某个视图的 .task 上。
+        // 挂在视图上时，菜单栏面板每悬停一次就重跑一次 start()：
+        // 既会重新采集一轮，又会把自动刷新的定时器一再重建、永远轮不到触发；
+        // 面板收起时那次被取消的采集还会被记成一条"失败"。model.start() 自身幂等。
+        Task { await model.start() }
     }
 }
