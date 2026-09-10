@@ -70,7 +70,7 @@ struct SchemaConsistencyTests {
     @Test("实际建出来的表结构与 shared/schema.sql 逐列一致")
     func storeMatchesSharedSchema() async throws {
         let declared = try declaredTables()
-        #expect(declared.keys.sorted() == ["daily_usage", "fetch_log"])
+        #expect(declared.keys.sorted() == ["daily_usage", "fetch_log", "server_meta"])
 
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("vpsquota-schema-\(UUID().uuidString)", isDirectory: true)

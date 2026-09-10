@@ -107,10 +107,11 @@ jobs:
       - name: 编译（Release）
         run: dotnet build VpsQuota.sln -c Release --no-restore
 
-      # TODO: 待新增 windows/VpsQuota.Tests 后启用。
-      #       现在不能打开 —— solution 里没有测试工程时 dotnet test 会直接报错。
-      # - name: 单元测试
-      #   run: dotnet test VpsQuota.sln -c Release --no-build
+      # 与 macOS 端的 swift test 对称：账期切分、口径折算、存储语义、配置契约
+      # 都在这里跑一遍。两端的用例期望值是逐字对齐的 ——
+      # 改动任一端的计算逻辑而没同步另一端，这一步就会红。
+      - name: 单元测试
+        run: dotnet test VpsQuota.sln -c Release --no-build
 
       - name: 发布（框架依赖，需目标机装 .NET 8 Desktop Runtime）
         run: dotnet publish VpsQuota/VpsQuota.csproj -c Release --no-build -o publish

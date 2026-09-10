@@ -76,7 +76,7 @@ profile 名可用 `NOTARY_PROFILE` 覆盖。
 > SwiftUI 应用与 CLI 的编译错误抓不到。提 PR 前请另跑一次 `swift build`。
 
 没有 Windows 机器也可以贡献 —— CI 会在 `windows-latest` 上编译，
-这是 Windows 端目前唯一的自动化验证手段（该端尚无测试工程，见下面「有价值的方向」）。
+Windows 端另有 `windows/VpsQuota.Tests`，CI 里会跑 `dotnet test`。
 
 ## 目录约定：两端同名同职责
 
@@ -93,7 +93,8 @@ UI/           界面
 **改动共用逻辑时请对照着改另一端。** 如果只改得动一端，也可以提 PR 并在描述里说明，
 另一端可以后续补 —— 但不要让两端的行为静默地分叉。
 
-跨端一致性由两组测试兜底，它们在 `macos/Tests/` 里：
+跨端一致性由两端对称的测试兜底（`macos/Tests/` 与 `windows/VpsQuota.Tests/`，
+用例逐条对应、期望值逐字相同）。其中最关键的两组：
 
 - `CrossPlatformConfigTests` —— `shared/config.example.json` 能被解析，字段名两端一致
 - `SchemaConsistencyTests` —— 代码建出来的表结构与 `shared/schema.sql` 逐列一致
@@ -144,6 +145,8 @@ scope 一般是 `macos` / `windows` / `shared`，跨端改动可省略。
 ## 提 PR 之前
 
 - [ ] `cd macos && swift build && swift test` 全绿
+- [ ] 动过 `Core/` 里的计算逻辑时，两端的对应用例都改了
+      （`dotnet test` 需要 Windows 环境；没有的话在 PR 里说明，让 CI 跑）
 - [ ] 如果改了共用逻辑，另一端也改了（或在描述里说明为什么没改）
 - [ ] 如果改了配置字段或 schema，`shared/` 下的事实源也更新了
 - [ ] 相关文档同步更新了（README / `docs/`）
@@ -154,8 +157,8 @@ scope 一般是 `macos` / `windows` / `shared`，跨端改动可省略。
 
 如果想找事做，这几件是目前最缺的：
 
-- **Windows 端的测试工程** —— 该端没有任何自动化测试。至少可以覆盖 config 序列化的
-  字段名和 `SqliteStore` 里硬编码的建表 SQL 与 `shared/schema.sql` 的一致性
+- **Windows 端测试的进一步覆盖** —— `windows/VpsQuota.Tests` 已经覆盖了账期切分、
+  口径折算、存储语义和配置契约（与 macOS 端逐条对应），采集器与 UI 层仍是空白
 - **更多服务商** —— 按上面的步骤加一个采集器
 - **界面截图** —— README 里一张图都没有
 - **告警推送** —— 当前明确列在非目标里，但如果做得足够克制（可关、不吵），值得讨论

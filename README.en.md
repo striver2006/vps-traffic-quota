@@ -139,6 +139,7 @@ Requires the .NET 8 SDK and Windows 10 1803+ (uses the built-in OpenSSH client).
 ```powershell
 cd windows
 dotnet build VpsQuota.sln -c Release
+dotnet test VpsQuota.sln -c Release --no-build    # run unit tests
 .\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
 ```
 

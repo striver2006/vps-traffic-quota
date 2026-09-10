@@ -57,6 +57,11 @@ public sealed class SqliteStore : IAsyncDisposable
                 error      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_fetch_log_server ON fetch_log (server_id, fetched_at DESC);
+            CREATE TABLE IF NOT EXISTS server_meta (
+                server_id         TEXT NOT NULL,
+                reported_quota_gb REAL,
+                PRIMARY KEY (server_id)
+            );
             """;
         command.ExecuteNonQuery();
     }
@@ -115,7 +120,9 @@ public sealed class SqliteStore : IAsyncDisposable
             command.CommandText =
                 "INSERT INTO fetch_log (server_id, fetched_at, ok, error) VALUES ($s, $t, $ok, $e)";
             command.Parameters.AddWithValue("$s", serverId);
-            command.Parameters.AddWithValue("$t", new DateTimeOffset(at).ToUnixTimeSeconds());
+            // 必须先定 Kind：DateTimeOffset(DateTime) 对 Unspecified 按本地时区解释，
+            // 时间戳会整体偏移数小时，「上次刷新于」就跟着错。
+            command.Parameters.AddWithValue("$t", ToUnixSeconds(at));
             command.Parameters.AddWithValue("$ok", ok ? 1 : 0);
             command.Parameters.AddWithValue("$e", (object?)error ?? DBNull.Value);
             command.ExecuteNonQuery();
@@ -181,6 +188,88 @@ public sealed class SqliteStore : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 记下上游报告的配额（目前只有 Vultr 有）。传 null 表示"这次没拿到"，不覆盖已有值。
+    /// </summary>
+    public async Task SetReportedQuotaAsync(string serverId, double? quotaGB)
+    {
+        if (quotaGB is not { } value) return;
+
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText =
+                "INSERT INTO server_meta (server_id, reported_quota_gb) VALUES ($s, $q) " +
+                "ON CONFLICT(server_id) DO UPDATE SET reported_quota_gb = excluded.reported_quota_gb";
+            command.Parameters.AddWithValue("$s", serverId);
+            command.Parameters.AddWithValue("$q", value);
+            command.ExecuteNonQuery();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>读回上游报告的配额。没记录过则为 null。</summary>
+    public async Task<double?> ReportedQuotaAsync(string serverId)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT reported_quota_gb FROM server_meta WHERE server_id = $s";
+            command.Parameters.AddWithValue("$s", serverId);
+
+            var value = command.ExecuteScalar();
+            if (value is null || value == DBNull.Value) return null;
+            return Convert.ToDouble(value);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>最近一次采集的错误。若最近一次是成功的则返回 null。</summary>
+    /// <remarks>
+    /// 语义与内存里那份 LastErrors 一致：成功一次就把错误清掉。
+    /// 有了它，应用重启后不必等第一轮采集跑完，也能如实显示上次的失败原因（P5）。
+    /// </remarks>
+    public async Task<string?> LastErrorAsync(string serverId)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText =
+                "SELECT ok, error FROM fetch_log WHERE server_id = $s " +
+                "ORDER BY fetched_at DESC LIMIT 1";
+            command.Parameters.AddWithValue("$s", serverId);
+
+            using var reader = command.ExecuteReader();
+            if (!reader.Read()) return null;
+            if (reader.GetInt32(0) != 0) return null;      // 最近一次是成功的
+            return reader.IsDBNull(1) ? null : reader.GetString(1);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 折算成 Unix 秒。Local 按时区换算；Unspecified 视作已经是 UTC ——
+    /// 应用内的时间全部来自 DateTime.UtcNow，但类型系统拦不住误传，这里兜一层。
+    /// </summary>
+    private static long ToUnixSeconds(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => new DateTimeOffset(value).ToUnixTimeSeconds(),
+        DateTimeKind.Local => new DateTimeOffset(value).ToUniversalTime().ToUnixTimeSeconds(),
+        _ => new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)).ToUnixTimeSeconds(),
+    };
+
     /// <summary>清理过期的采集日志，避免文件无限增长。默认保留 90 天。</summary>
     public async Task PruneFetchLogAsync(int olderThanDays, DateTime now)
     {
@@ -189,8 +278,7 @@ public sealed class SqliteStore : IAsyncDisposable
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "DELETE FROM fetch_log WHERE fetched_at < $cutoff";
-            command.Parameters.AddWithValue(
-                "$cutoff", new DateTimeOffset(now.AddDays(-olderThanDays)).ToUnixTimeSeconds());
+            command.Parameters.AddWithValue("$cutoff", ToUnixSeconds(now.AddDays(-olderThanDays)));
             command.ExecuteNonQuery();
         }
         finally

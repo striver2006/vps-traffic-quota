@@ -125,6 +125,7 @@ swift run vpsquota-cli status                    # 只读本地数据，不联�
 ```powershell
 cd windows
 dotnet build VpsQuota.sln -c Release
+dotnet test VpsQuota.sln -c Release --no-build    # 跑单元测试
 .\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
 ```
 
@@ -180,7 +181,8 @@ vnstat 只统计它自己开始记录之后的流量，所以中途接入时本�
 │   ├── Sources/vpsquota-cli/    诊断工具
 │   └── Tests/                   单元测试（无 UI 依赖，可直接 swift test）
 └── windows/         .NET 8 WPF 托盘应用
-    └── VpsQuota/    目录结构与 macOS 端同名同职责，便于对照
+    ├── VpsQuota/          目录结构与 macOS 端同名同职责，便于对照
+    └── VpsQuota.Tests/    单元测试，用例与 macOS 端逐条对应
 ```
 
 macOS 端刻意把逻辑与 UI 拆成两个 target：`VPSQuotaCore` 不引入任何 UI 框架，

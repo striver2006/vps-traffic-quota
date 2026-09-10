@@ -75,6 +75,11 @@ public actor SQLiteStore {
             error      TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_fetch_log_server ON fetch_log (server_id, fetched_at DESC);
+        CREATE TABLE IF NOT EXISTS server_meta (
+            server_id         TEXT NOT NULL,
+            reported_quota_gb REAL,
+            PRIMARY KEY (server_id)
+        );
         """
         try exec(handle, sql)
     }
@@ -204,6 +209,65 @@ public actor SQLiteStore {
         guard sqlite3_step(stmt) == SQLITE_ROW,
               sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 0)))
+    }
+
+    /// 记下上游报告的配额（目前只有 Vultr 有）。传 nil 表示"这次没拿到"，不覆盖已有值。
+    public func setReportedQuota(serverId: String, quotaGB: Double?) throws {
+        guard let quotaGB else { return }
+        let sql = """
+        INSERT INTO server_meta (server_id, reported_quota_gb) VALUES (?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET reported_quota_gb = excluded.reported_quota_gb
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw StoreError.sql(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, serverId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, quotaGB)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw StoreError.sql(lastErrorMessage())
+        }
+    }
+
+    /// 读回上游报告的配额。没记录过则为 nil。
+    public func reportedQuota(serverId: String) throws -> Double? {
+        let sql = "SELECT reported_quota_gb FROM server_meta WHERE server_id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw StoreError.sql(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, serverId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(stmt, 0)
+    }
+
+    /// 最近一次采集的错误。若最近一次是成功的则返回 nil。
+    ///
+    /// 语义与内存里那份 `lastErrors` 一致：成功一次就把错误清掉。
+    /// 有了它，应用重启后不必等第一轮采集跑完，也能如实显示上次的失败原因（P5）。
+    public func lastError(serverId: String) throws -> String? {
+        let sql = """
+        SELECT ok, error FROM fetch_log
+        WHERE server_id = ?
+        ORDER BY fetched_at DESC
+        LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw StoreError.sql(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, serverId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard sqlite3_column_int(stmt, 0) == 0,
+              let text = sqlite3_column_text(stmt, 1) else { return nil }
+        return String(cString: text)
     }
 
     /// 清理过期的采集日志，避免文件无限增长。默认保留 90 天。

@@ -74,6 +74,24 @@ struct BillingPeriodTests {
         #expect(high.endDayExclusive == "2026-09-30")
     }
 
+    @Test("重置日 29/30 在平年 2 月退化为 2-28")
+    func resetDay29And30InCommonYearFebruary() {
+        let p29 = BillingPeriod.current(resetDay: 29, now: utc(2026, 2, 28, 6))
+        #expect(p29.startDay == "2026-02-28")
+
+        let p30 = BillingPeriod.current(resetDay: 30, now: utc(2026, 2, 28, 6))
+        #expect(p30.startDay == "2026-02-28")
+    }
+
+    @Test("由已被钳制的锚点再回退一个月，仍落在正确的日子上")
+    func chainedClampingGoesBackCorrectly() {
+        // 1 月中旬、重置日 31：本月锚点是 1-31，尚未到达，
+        // 账期应为 [2025-12-31, 2026-01-31) —— 而不是被 2 月的 28 天带偏。
+        let p = BillingPeriod.current(resetDay: 31, now: utc(2026, 1, 15))
+        #expect(p.startDay == "2025-12-31")
+        #expect(p.endDayExclusive == "2026-01-31")
+    }
+
     @Test("contains 按左闭右开判定")
     func containsIsHalfOpen() {
         let p = BillingPeriod.current(resetDay: 1, now: utc(2026, 9, 8))

@@ -123,3 +123,72 @@ struct StoreTests {
         #expect(config.servers[0].quotaGB == 0)
     }
 }
+
+/// 上游元数据与错误的持久化（P5、S3）。
+///
+/// 这两样以前只存在内存里：应用一重启，一台一直连不上的服务器会显示成"正常"，
+/// 而 quotaGB 填 0 的 Vultr 实例会显示成"配额未知"—— 直到第一轮采集跑完为止。
+@Suite("元数据持久化")
+struct StoreMetaTests {
+
+    private func makeStore() throws -> (SQLiteStore, URL) {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("vpsquota-meta-\(UUID().uuidString)", isDirectory: true)
+        return (try SQLiteStore(path: dir.appendingPathComponent("usage.sqlite")), dir)
+    }
+
+    @Test("上游报告的配额写入后能读回，且是覆盖式的")
+    func reportedQuotaRoundTrip() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        #expect(try await store.reportedQuota(serverId: "s1") == nil)
+
+        try await store.setReportedQuota(serverId: "s1", quotaGB: 2000)
+        #expect(try await store.reportedQuota(serverId: "s1") == 2000)
+
+        try await store.setReportedQuota(serverId: "s1", quotaGB: 4000)
+        #expect(try await store.reportedQuota(serverId: "s1") == 4000)
+    }
+
+    @Test("传 nil 表示这次没拿到，不覆盖已有值")
+    func nilQuotaDoesNotOverwrite() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try await store.setReportedQuota(serverId: "s1", quotaGB: 2000)
+        try await store.setReportedQuota(serverId: "s1", quotaGB: nil)
+        #expect(try await store.reportedQuota(serverId: "s1") == 2000)
+    }
+
+    @Test("最近一次采集失败时读得到错误原因")
+    func lastErrorAfterFailure() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        try await store.logFetch(serverId: "s1", at: t0, ok: true, error: nil)
+        try await store.logFetch(serverId: "s1", at: t0 + 60, ok: false, error: "Permission denied")
+
+        #expect(try await store.lastError(serverId: "s1") == "Permission denied")
+    }
+
+    @Test("最近一次成功时不再报旧错误")
+    func lastErrorClearedBySuccess() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        try await store.logFetch(serverId: "s1", at: t0, ok: false, error: "Permission denied")
+        try await store.logFetch(serverId: "s1", at: t0 + 60, ok: true, error: nil)
+
+        #expect(try await store.lastError(serverId: "s1") == nil)
+    }
+
+    @Test("从未采集过时没有错误")
+    func lastErrorIsNilWhenNeverFetched() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(try await store.lastError(serverId: "s1") == nil)
+    }
+}

@@ -134,6 +134,19 @@ struct QuotaCalculatorTests {
         #expect(status.willExceed == false)
     }
 
+    @Test("恰好半天时开始给出外推值")
+    func projectionAtExactlyHalfDay() {
+        // K5 的边界就是 elapsed >= 0.5。这一行最容易在两端之间写反，
+        // 所以两边都要把「恰好 0.5」钉住，而不只是测「不足半天」。
+        let status = QuotaCalculator.status(
+            server: server(.outbound, quotaGB: 100),
+            days: [DailyUsage(day: "2026-09-01", rxBytes: 0, txBytes: oneGiB)],
+            now: utc(2026, 9, 1, 12)
+        )
+        let projected = try! #require(status.projectedGB)
+        #expect(abs(projected - 1.0 / 0.5 * 30) < 0.01)
+    }
+
     @Test("剩余量不会出现负数")
     func remainingNeverNegative() {
         let status = ServerStatus(

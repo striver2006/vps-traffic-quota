@@ -26,6 +26,10 @@ public struct SSHVnstatCollector: Collector {
     // MARK: - vnstat 的 JSON 结构
 
     struct VnstatOutput: Decodable {
+        /// vnStat 2.x 才有这个字段。1.x 的 JSON 结构完全不同
+        /// （`interfaces[].id` + `traffic.days[]`，且单位是 KiB），解出来会是一片空。
+        let jsonversion: String?
+
         struct Interface: Decodable {
             struct Traffic: Decodable {
                 struct DayEntry: Decodable {
@@ -46,6 +50,13 @@ public struct SSHVnstatCollector: Collector {
         let interfaces: [Interface]
     }
 
+    /// vnStat 1.x 的输出特征：顶层没有 jsonversion，且网卡对象用 `id` 而不是 `name`。
+    /// 单独识别出来是为了给一句能照着做的提示 —— 否则用户会看到
+    /// "还没有可用的日流量数据"，然后去等一天，而真正该做的是升级 vnstat。
+    private static func looksLikeVnstat1(_ raw: String) -> Bool {
+        raw.contains("\"traffic\"") && raw.contains("\"days\"") && !raw.contains("\"jsonversion\"")
+    }
+
     // MARK: - Collector
 
     public func fetch(server: ServerConfig, since: Date) async throws -> CollectResult {
@@ -59,6 +70,15 @@ public struct SSHVnstatCollector: Collector {
         }
         let offsetText = output[..<braceIndex].trimmingCharacters(in: .whitespacesAndNewlines)
         let jsonText = String(output[braceIndex...])
+
+        if Self.looksLikeVnstat1(jsonText) {
+            throw CollectError.noData(
+                "服务器「\(server.name)」上的 vnstat 是 1.x 版本，输出格式与本应用不兼容"
+                + "（1.x 按 KiB 计数、字段名也不同，照着解会得出错误的数字）。"
+                + "请升级到 vnStat 2.0 以上：Debian/Ubuntu 可用 apt install vnstat，"
+                + "升级后原有的历史数据会自动迁移。"
+            )
+        }
 
         let parsed: VnstatOutput
         do {

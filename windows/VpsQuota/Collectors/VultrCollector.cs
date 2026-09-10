@@ -25,10 +25,20 @@ public sealed class VultrCollector : ICollector
     private readonly string _apiKey;
     private readonly string _baseUrl;
 
-    public VultrCollector(string apiKey, string baseUrl = "https://api.vultr.com/v2")
+    /// <summary>
+    /// 实例 ID → 上游报告的配额（GB）。由调度层在一轮刷新开始时拉一次并传进来。
+    /// 为 null 表示"自己去拉"，供单独调用的场景使用。
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, double>? _quotaLookup;
+
+    public VultrCollector(
+        string apiKey,
+        string baseUrl = "https://api.vultr.com/v2",
+        IReadOnlyDictionary<string, double>? quotaLookup = null)
     {
         _apiKey = apiKey;
         _baseUrl = baseUrl.TrimEnd('/');
+        _quotaLookup = quotaLookup;
     }
 
     // 响应模型
@@ -37,6 +47,20 @@ public sealed class VultrCollector : ICollector
     {
         [JsonPropertyName("instances")]
         public List<Instance> Instances { get; set; } = new();
+
+        /// <summary>分页游标。Vultr 一页最多 500 条，超过就要靠 meta.links.next 继续。</summary>
+        [JsonPropertyName("meta")]
+        public MetaInfo? Meta { get; set; }
+
+        internal sealed class MetaInfo
+        {
+            [JsonPropertyName("links")] public LinksInfo? Links { get; set; }
+
+            internal sealed class LinksInfo
+            {
+                [JsonPropertyName("next")] public string? Next { get; set; }
+            }
+        }
 
         internal sealed class Instance
         {
@@ -67,11 +91,26 @@ public sealed class VultrCollector : ICollector
 
     public async Task<List<InstanceSummary>> ListInstancesAsync(CancellationToken ct = default)
     {
-        var response = await GetAsync<InstancesResponse>("instances?per_page=500", ct).ConfigureAwait(false);
-        return response.Instances
-            .Select(i => new InstanceSummary(
-                i.Id, i.Label ?? "", i.MainIp ?? "", i.Region ?? "", i.AllowedBandwidth))
-            .ToList();
+        var summaries = new List<InstanceSummary>();
+        string? cursor = null;
+
+        // 跟着 meta.links.next 翻页。以前只取第一页就返回，账号实例超过一页时
+        // 后面那些会静默变成"配额未知"—— 没有任何报错，最难查的那种。
+        // 加一个页数上限，免得上游游标出问题时在这里转不出去。
+        for (var page = 0; page < 20; page++)
+        {
+            var path = "instances?per_page=500";
+            if (!string.IsNullOrEmpty(cursor)) path += "&cursor=" + Uri.EscapeDataString(cursor);
+
+            var response = await GetAsync<InstancesResponse>(path, ct).ConfigureAwait(false);
+            summaries.AddRange(response.Instances.Select(i => new InstanceSummary(
+                i.Id, i.Label ?? "", i.MainIp ?? "", i.Region ?? "", i.AllowedBandwidth)));
+
+            cursor = response.Meta?.Links?.Next;
+            if (string.IsNullOrEmpty(cursor)) break;
+        }
+
+        return summaries;
     }
 
     public async Task<CollectResult> FetchAsync(
@@ -81,12 +120,23 @@ public sealed class VultrCollector : ICollector
             throw CollectException.Misconfigured($"服务器「{server.Name}」未填写 Vultr 实例 ID");
 
         // 配额：只在用户没手填时才去问 API，省一次请求。
+        //
+        // 调度层若已经在本轮里拉过实例列表，会通过 _quotaLookup 把结果传进来 ——
+        // 否则 N 台配额未填的 Vultr 实例就是 N 次全量列表请求，很容易撞上速率限制。
         double? reportedQuota = null;
         if (server.QuotaGB <= 0)
         {
-            var instances = await ListInstancesAsync(ct).ConfigureAwait(false);
-            reportedQuota = instances
-                .FirstOrDefault(i => i.Id == server.VultrInstanceId)?.AllowedBandwidthGB;
+            if (_quotaLookup is not null)
+            {
+                reportedQuota = _quotaLookup.TryGetValue(server.VultrInstanceId, out var cached)
+                    ? cached : null;
+            }
+            else
+            {
+                var instances = await ListInstancesAsync(ct).ConfigureAwait(false);
+                reportedQuota = instances
+                    .FirstOrDefault(i => i.Id == server.VultrInstanceId)?.AllowedBandwidthGB;
+            }
         }
 
         var bandwidth = await GetAsync<BandwidthResponse>(

@@ -75,6 +75,11 @@ CREATE TABLE daily_usage (
 );
 ```
 
+另外两张表都是为「关掉应用再打开，界面不该失忆」服务的：
+`fetch_log` 记每次采集的成败与错误原文，`server_meta` 记上游报告的配额。
+两者都要落盘，否则重启后到首轮采集成功之间，一台连不上的机器会显示成"正常"、
+配额填 0 的 Vultr 实例会显示成"配额未知"。
+
 **主键是 `(server_id, day)`，写入是覆盖式 upsert 而不是忽略冲突** ——
 当天的流量会持续增长，同一天必须能被反复改写。
 
@@ -88,7 +93,8 @@ CREATE TABLE daily_usage (
 upsert 到本地之后历史可以无限累积。更实际的好处是**容错**：
 某次采集失败，界面依然显示上次成功采集到的数据，而不是变成一片空白。
 
-`fetch_log` 表记录每次采集的成败，用来在界面上显示「上次成功刷新时间」和失败原因。
+`fetch_log` 表记录每次采集的成败，用来在界面上显示「上次成功刷新时间」和失败原因；
+读取时只看最近一条 —— 成功一次就把错误清掉，与内存里那份缓存的语义一致。
 
 ### 3. 计算层 —— 纯函数，全部可单测
 
@@ -144,15 +150,19 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 | 存储 | `Storage/SQLiteStore.swift` | `Storage/SqliteStore.cs` |
 | 密钥 | `Storage/KeychainStore.swift`（钥匙串） | `Storage/SecretStore.cs`（DPAPI） |
 
-改动一端的逻辑时，**对照着改另一端**。macOS 侧有两组测试提供部分保障：
+改动一端的逻辑时，**对照着改另一端**。两端各有一套测试，且**用例是逐条对应的**：
 
-- `CrossPlatformConfigTests` —— 校验 `shared/config.example.json` 能被解析，字段名两端一致
-- `SchemaConsistencyTests` —— 校验代码建出来的表结构与 `shared/schema.sql` 逐列一致
+| 测试 | macOS | Windows |
+|---|---|---|
+| 账期切分（K1） | `BillingPeriodTests.swift` | `BillingPeriodTests.cs` |
+| 口径折算与外推（K2–K7） | `QuotaCalculatorTests.swift` | `QuotaCalculatorTests.cs` + `UsageBaselineTests.cs` |
+| 存储语义（S1–S3） | `StoreTests.swift` | `SqliteStoreTests.cs` |
+| 配置契约（G2） | `CrossPlatformConfigTests.swift` | `CrossPlatformConfigTests.cs` |
+| 表结构（对照 `shared/schema.sql`） | `SchemaConsistencyTests.swift` | `SchemaConsistencyTests.cs` |
 
-**但要清楚它们的边界**：两组测试都只跑在 macOS 端，一行 C# 代码都不碰。
-它们能保证 Swift 这一侧符合共享契约，却拦不住 C# 那一侧独自漂移 ——
-Windows 端目前没有任何自动化测试（见 CHANGELOG 的「已知限制」），
-那半边的账期切分与口径折算全靠人工对照。这是当前最大的一处结构性缺口。
+两边读同一份 `shared/schema.sql` 与 `shared/config.example.json`，
+**期望值也逐字相同** —— 改了任一端的计算逻辑而没同步另一端，对面的 CI 就会红。
+验收标准第 6 条（两端对同一份输入给出相同结果）靠的就是这层对称。
 
 ### macOS 端为什么拆两个 target
 

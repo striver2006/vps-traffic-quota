@@ -27,3 +27,15 @@ CREATE TABLE IF NOT EXISTS fetch_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fetch_log_server ON fetch_log (server_id, fetched_at DESC);
+
+-- 每台服务器的上游元数据，目前只有 Vultr API 报告的配额（allowed_bandwidth）。
+--
+-- 为什么要落盘：配额只在采集成功时才拿得到，而 quotaGB 填 0 的 Vultr 实例
+-- （文档推荐的用法）在重启后到首次采集成功之间就会变成"配额未知"——
+-- 进度条消失、常驻区只剩一道短横。S3 要求采集失败时继续显示上次成功的数据，
+-- 离线启动这条路径下必须也成立。
+CREATE TABLE IF NOT EXISTS server_meta (
+    server_id         TEXT NOT NULL,
+    reported_quota_gb REAL,                -- 上游报告的月配额（GB）；未知为 NULL
+    PRIMARY KEY (server_id)
+);

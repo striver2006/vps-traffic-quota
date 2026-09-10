@@ -34,6 +34,18 @@ public sealed class SshVnstatCollector : ICollector
 
     // vnstat 的 JSON 结构
 
+    /// <summary>
+    /// vnStat 1.x 的输出特征：顶层没有 jsonversion，且日数据挂在 traffic.days 下。
+    /// </summary>
+    /// <remarks>
+    /// 单独识别出来是为了给一句能照着做的提示 —— 否则用户会看到
+    /// "还没有可用的日流量数据"，然后去等一天，而真正该做的是升级 vnstat。
+    /// </remarks>
+    private static bool LooksLikeVnstat1(string raw) =>
+        raw.Contains("\"traffic\"", StringComparison.Ordinal)
+        && raw.Contains("\"days\"", StringComparison.Ordinal)
+        && !raw.Contains("\"jsonversion\"", StringComparison.Ordinal);
+
     private sealed class VnstatOutput
     {
         [JsonPropertyName("interfaces")]
@@ -81,6 +93,15 @@ public sealed class SshVnstatCollector : ICollector
 
         var offsetText = output[..braceIndex].Trim();
         var jsonText = output[braceIndex..];
+
+        if (LooksLikeVnstat1(jsonText))
+        {
+            throw CollectException.NoData(
+                $"服务器「{server.Name}」上的 vnstat 是 1.x 版本，输出格式与本应用不兼容"
+                + "（1.x 按 KiB 计数、字段名也不同，照着解会得出错误的数字）。"
+                + "请升级到 vnStat 2.0 以上：Debian/Ubuntu 可用 apt install vnstat，"
+                + "升级后原有的历史数据会自动迁移。");
+        }
 
         VnstatOutput parsed;
         try

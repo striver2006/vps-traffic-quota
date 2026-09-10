@@ -3,6 +3,7 @@ namespace VpsQuota.UI;
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
+using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.Scheduler;
 using VpsQuota.Storage;
@@ -22,6 +23,23 @@ public sealed class AppState
 
     /// <summary>应用生命周期。退出时取消它，让在途的 ssh 进程立刻收摊而不是干等 45 秒超时。</summary>
     private readonly CancellationTokenSource _lifetime = new();
+
+    /// <summary>
+    /// 跨 UTC 日时重算用的轻量定时器。
+    /// </summary>
+    /// <remarks>
+    /// 账期边界必定落在 UTC 零点，所以"日期变了"是账期可能翻页的充要信号。
+    /// 不能指望采集定时器来做这件事：刷新周期可以设成 1440 分钟，
+    /// 那样账期都换了大半天，界面还停在上一期的累计值上（验收标准第 5 条）。
+    /// 它只读本地库、不联网，所以 10 分钟跑一次也无所谓。
+    /// </remarks>
+    private readonly DispatcherTimer _rolloverTimer = new()
+    {
+        Interval = TimeSpan.FromMinutes(10),
+    };
+
+    /// <summary>上一次折算所依据的 UTC 日期。</summary>
+    private string _lastComputedDay = UtcDay.String(DateTime.UtcNow);
 
     private SettingsWindow? _settingsWindow;
     private MainWindow? _mainWindow;
@@ -87,6 +105,26 @@ public sealed class AppState
             catch (Exception ex) { ReportFailure(ex); }
         };
         ScheduleTimer();
+
+        _rolloverTimer.Tick += async (_, _) =>
+        {
+            try { await RecomputeIfDayChangedAsync(); }
+            catch (Exception ex) { ReportFailure(ex); }
+        };
+        _rolloverTimer.Start();
+    }
+
+    /// <summary>UTC 日期翻页时按本地数据重算一次，不联网。</summary>
+    private async Task RecomputeIfDayChangedAsync()
+    {
+        if (_monitor is null) return;
+
+        var today = UtcDay.String(DateTime.UtcNow);
+        if (today == _lastComputedDay) return;
+        _lastComputedDay = today;
+
+        Statuses = await _monitor.StatusesAsync();
+        StatusesChanged?.Invoke();
     }
 
     /// <summary>
@@ -270,6 +308,7 @@ public sealed class AppState
     public async ValueTask DisposeAsync()
     {
         _timer.Stop();
+        _rolloverTimer.Stop();
 
         // 先取消并等在途采集收敛，再关连接 —— 否则 RefreshAllAsync 可能还在用
         // 同一个 SqliteConnection，dispose 掉它会抛 ObjectDisposedException。

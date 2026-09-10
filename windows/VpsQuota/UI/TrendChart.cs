@@ -1,6 +1,7 @@
 namespace VpsQuota.UI;
 
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using VpsQuota.Core;
@@ -52,7 +53,8 @@ public sealed class TrendChart : FrameworkElement
             cumulative[i] = running;
         }
 
-        const double padLeft = 46, padRight = 12, padTop = 14, padBottom = 22;
+        // 右侧留白比左侧窄：那边只标一行"每日 xx"，说明柱子的量级。
+        const double padLeft = 46, padRight = 62, padTop = 14, padBottom = 22;
         var plotWidth = width - padLeft - padRight;
         var plotHeight = height - padTop - padBottom;
         if (plotWidth <= 0 || plotHeight <= 0) return;
@@ -72,6 +74,13 @@ public sealed class TrendChart : FrameworkElement
 
         double YFor(double gb) => padTop + plotHeight - gb / axisMax * plotHeight;
 
+        // 柱子用**自己的**纵轴。与累计曲线共用一套坐标的话，账期后期累计值远大于单日量，
+        // 柱子会被压到只剩两三个像素 —— 而"某天突然跑量"正是核心场景之一，
+        // 拐点必须一眼看得出来。右侧另标一套刻度说明柱子的量级。
+        var dailyMax = daily.Length == 0 ? 0 : daily.Max();
+        var barAxisMax = dailyMax > 0 ? dailyMax * 1.15 : 1;
+        double YForDaily(double gb) => padTop + plotHeight - gb / barAxisMax * plotHeight;
+
         // 纵轴刻度
         for (var i = 0; i <= 4; i++)
         {
@@ -86,6 +95,15 @@ public sealed class TrendChart : FrameworkElement
             DrawText(dc, ByteFormat.GB(value), padLeft - 6, y - 7, 9, Brushes.Gray, rightAlign: true);
         }
 
+        // 右轴：柱子（每日用量）的刻度。只标首尾两档，够读出量级又不抢戏。
+        if (dailyMax > 0)
+        {
+            var dailyLabel = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0x99));
+            dailyLabel.Freeze();
+            DrawText(dc, "每日 " + ByteFormat.GB(barAxisMax),
+                     padLeft + plotWidth + 4, padTop - 2, 9, dailyLabel);
+        }
+
         // 每日用量柱：与折线共用一套坐标，直接叠在同一张图上，省一次视线切换。
         var slotWidth = plotWidth / status.Days.Count;
         var barWidth = Math.Max(1, Math.Min(14, slotWidth * 0.6));
@@ -98,7 +116,7 @@ public sealed class TrendChart : FrameworkElement
         for (var i = 0; i < daily.Length; i++)
         {
             var centerX = padLeft + slotWidth * (i + 0.5);
-            var top = YFor(daily[i]);
+            var top = YForDaily(daily[i]);
             var barHeight = padTop + plotHeight - top;
             if (barHeight < 0.5) continue;
             dc.DrawRectangle(barBrush, null,

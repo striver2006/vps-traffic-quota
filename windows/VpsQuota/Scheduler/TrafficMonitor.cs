@@ -24,7 +24,11 @@ public sealed class TrafficMonitor
     /// 缓存它是为了让"离线读本地数据"这条路径也能显示出配额。
     /// </summary>
     private readonly Dictionary<string, double> _reportedQuota = new();
-    private readonly Dictionary<string, string> _lastErrors = new();
+    /// <summary>
+    /// 本轮各台的错误。值可为 null —— 需要区分「这一轮还没采过」（键不存在，回落读库）
+    /// 与「这一轮采成功了，没有错误」（键存在、值为 null，不该再把库里的旧错误捞回来）。
+    /// </summary>
+    private readonly Dictionary<string, string?> _lastErrors = new();
     private readonly Dictionary<string, IReadOnlyList<string>> _lastWarnings = new();
 
     public TrafficMonitor(SqliteStore store, AppConfig config, string? vultrApiKey)
@@ -52,7 +56,12 @@ public sealed class TrafficMonitor
         var now = DateTime.UtcNow;
         var servers = _config.Servers.ToList();
 
-        await Task.WhenAll(servers.Select(s => RefreshOneAsync(s, now, ct))).ConfigureAwait(false);
+        // 本轮所有配额未手填的 Vultr 实例共用一次实例列表请求。
+        // 每台各拉一次的话，返回的其实是同一份数据，白白逼近上游的速率限制。
+        var quotaLookup = await FetchVultrQuotasAsync(servers, ct).ConfigureAwait(false);
+
+        await Task.WhenAll(servers.Select(s => RefreshOneAsync(s, now, ct, quotaLookup)))
+            .ConfigureAwait(false);
         await _store.PruneFetchLogAsync(90, now).ConfigureAwait(false);
 
         return await StatusesAsync(now).ConfigureAwait(false);
@@ -60,23 +69,30 @@ public sealed class TrafficMonitor
 
     /// <summary>只刷新一台，供设置界面的"测试连接"使用。返回 null 表示成功。</summary>
     public async Task<string?> RefreshOneAsync(
-        ServerConfig server, DateTime now, CancellationToken ct = default)
+        ServerConfig server, DateTime now, CancellationToken ct = default,
+        IReadOnlyDictionary<string, double>? quotaLookup = null)
     {
         var period = BillingPeriod.Current(server.ResetDay, now);
 
         try
         {
-            var collector = MakeCollector(server);
+            var collector = MakeCollector(server, quotaLookup);
             var result = await collector.FetchAsync(server, period.Start, ct).ConfigureAwait(false);
 
             await _store.UpsertAsync(server.Id, result.Days).ConfigureAwait(false);
             await _store.LogFetchAsync(server.Id, now, ok: true, error: null).ConfigureAwait(false);
 
+            // 也落盘：否则重启后到首次采集成功之间，QuotaGB 填 0 的 Vultr 实例
+            // 会显示成"配额未知"，进度条消失（S3）。
+            await _store.SetReportedQuotaAsync(server.Id, result.ReportedQuotaGB).ConfigureAwait(false);
+
             await _stateGate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 if (result.ReportedQuotaGB is { } quota) _reportedQuota[server.Id] = quota;
-                _lastErrors.Remove(server.Id);
+                // 置 null 而不是 Remove：StatusesAsync 用「字典里没有这个键」作为
+                // 回落读库的信号，Remove 的话刚采集成功的这台又会把库里那条旧错误捞回来。
+                _lastErrors[server.Id] = null;
                 _lastWarnings[server.Id] = result.Warnings;
             }
             finally { _stateGate.Release(); }
@@ -130,13 +146,20 @@ public sealed class TrafficMonitor
             double? quota;
             string? error;
             IReadOnlyList<string>? warnings;
+            bool hasQuota, hasError;
             try
             {
-                quota = _reportedQuota.TryGetValue(server.Id, out var q) ? q : null;
-                error = _lastErrors.GetValueOrDefault(server.Id);
+                hasQuota = _reportedQuota.TryGetValue(server.Id, out var q);
+                quota = hasQuota ? q : null;
+                hasError = _lastErrors.TryGetValue(server.Id, out error);
                 warnings = _lastWarnings.GetValueOrDefault(server.Id);
             }
             finally { _stateGate.Release(); }
+
+            // 本轮内存里没有的，回落读库 —— 这样应用刚启动、一次都还没采集时，
+            // 界面显示的也是上次退出前的真实状况，而不是"配额未知 + 一切正常"这种假象。
+            if (!hasQuota) quota = await _store.ReportedQuotaAsync(server.Id).ConfigureAwait(false);
+            if (!hasError) error = await _store.LastErrorAsync(server.Id).ConfigureAwait(false);
 
             result.Add(QuotaCalculator.Status(
                 server, days, now, quota, lastSuccess, error, warnings));
@@ -154,11 +177,44 @@ public sealed class TrafficMonitor
         return await _store.DaysAsync(serverId, from, to).ConfigureAwait(false);
     }
 
-    private ICollector MakeCollector(ServerConfig server) => server.Provider switch
+    /// <summary>
+    /// 一轮刷新开始时把 Vultr 的实例列表拉一次，供本轮所有 Vultr 采集共用。
+    /// </summary>
+    /// <remarks>
+    /// 没有配额未填的 Vultr 实例时不发请求；拉取失败也不算错误 ——
+    /// 各台照常走自己的采集路径，只是退回到"自己去问"而已。
+    /// </remarks>
+    private async Task<IReadOnlyDictionary<string, double>?> FetchVultrQuotasAsync(
+        List<ServerConfig> servers, CancellationToken ct)
+    {
+        var needsQuota = servers.Any(s => s.Provider == ProviderKind.Vultr && s.QuotaGB <= 0);
+        if (!needsQuota || string.IsNullOrEmpty(_vultrApiKey)) return null;
+
+        try
+        {
+            var instances = await new VultrCollector(_vultrApiKey)
+                .ListInstancesAsync(ct).ConfigureAwait(false);
+
+            var table = new Dictionary<string, double>();
+            foreach (var instance in instances)
+            {
+                if (instance.AllowedBandwidthGB is { } quota) table[instance.Id] = quota;
+            }
+            return table;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private ICollector MakeCollector(
+        ServerConfig server,
+        IReadOnlyDictionary<string, double>? quotaLookup = null) => server.Provider switch
     {
         ProviderKind.Vultr => string.IsNullOrEmpty(_vultrApiKey)
             ? throw CollectException.Misconfigured("尚未设置 Vultr API Key，请在设置中填写")
-            : new VultrCollector(_vultrApiKey),
+            : new VultrCollector(_vultrApiKey, quotaLookup: quotaLookup),
         ProviderKind.Ssh => new SshVnstatCollector(),
         _ => throw CollectException.Misconfigured($"未知的服务商类型：{server.Provider}"),
     };

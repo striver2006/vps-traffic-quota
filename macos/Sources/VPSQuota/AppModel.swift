@@ -84,6 +84,16 @@ final class AppModel {
     private let configStore = ConfigStore()
     private var refreshTimer: Timer?
 
+    /// 跨 UTC 日时重算用的轻量定时器。
+    ///
+    /// 账期边界必定落在 UTC 零点，所以"日期变了"是账期可能翻页的充要信号。
+    /// 不能指望采集定时器来做这件事：刷新周期可以设成 1440 分钟，
+    /// 那样账期都换了大半天，界面还停在上一期的累计值上（验收标准第 5 条）。
+    private var rolloverTimer: Timer?
+
+    /// 上一次折算所依据的 UTC 日期。
+    private var lastComputedDay = UTCDay.string(from: Date())
+
     /// `start()` 只该跑一次。它由 `App.bootstrap()` 调用，而不是挂在视图的 `.task` 上 ——
     /// 挂在视图上时菜单栏面板每悬停一次就会重跑一轮采集并重建定时器。
     private var didStart = false
@@ -196,6 +206,7 @@ final class AppModel {
         didStart = true
         statuses = await monitor.statuses()
         scheduleTimer()
+        scheduleRolloverCheck()
         await refresh()
     }
 
@@ -208,10 +219,31 @@ final class AppModel {
         lastRefreshAt = Date()
     }
 
-    /// 重新按本地数据折算一遍。跨过账期重置日时需要它把界面切到新账期。
+    /// 重新按本地数据折算一遍，不联网。跨过账期重置日时靠它把界面切到新账期。
     func recomputeFromLocal() async {
         guard let monitor else { return }
         statuses = await monitor.statuses()
+    }
+
+    /// 每 10 分钟看一眼 UTC 日期是否翻页；翻了就按本地数据重算一次。
+    ///
+    /// 只读本地库，不发起任何网络请求，所以频率高一点也无所谓。
+    /// 账期切换当天用量归零、起始已用量补偿失效，都由这条路径兑现。
+    private func scheduleRolloverCheck() {
+        rolloverTimer?.invalidate()
+        let timer = Timer(timeInterval: 600, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.recomputeIfDayChanged() }
+        }
+        timer.tolerance = 60
+        RunLoop.main.add(timer, forMode: .common)
+        rolloverTimer = timer
+    }
+
+    private func recomputeIfDayChanged() async {
+        let today = UTCDay.string(from: Date())
+        guard today != lastComputedDay else { return }
+        lastComputedDay = today
+        await recomputeFromLocal()
     }
 
     // MARK: - 配置

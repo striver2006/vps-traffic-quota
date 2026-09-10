@@ -13,14 +13,20 @@ public struct VultrCollector: Collector {
     private let session: URLSession
     private let baseURL: URL
 
+    /// 实例 ID → 上游报告的配额（GB）。由调度层在一轮刷新开始时拉一次并传进来。
+    /// 为 nil 表示"自己去拉"，供 CLI 和单独调用的场景使用。
+    private let quotaLookup: [String: Double]?
+
     public init(
         apiKey: String,
         session: URLSession = .shared,
-        baseURL: URL = URL(string: "https://api.vultr.com/v2")!
+        baseURL: URL = URL(string: "https://api.vultr.com/v2")!,
+        quotaLookup: [String: Double]? = nil
     ) {
         self.apiKey = apiKey
         self.session = session
         self.baseURL = baseURL
+        self.quotaLookup = quotaLookup
     }
 
     // MARK: - 响应模型
@@ -40,6 +46,15 @@ public struct VultrCollector: Collector {
             }
         }
         let instances: [Instance]
+
+        /// 分页游标。Vultr 一页最多 500 条，超过就要靠 `meta.links.next` continue。
+        struct Meta: Decodable {
+            struct Links: Decodable {
+                let next: String?
+            }
+            let links: Links?
+        }
+        let meta: Meta?
     }
 
     struct BandwidthResponse: Decodable {
@@ -66,16 +81,34 @@ public struct VultrCollector: Collector {
     }
 
     public func listInstances() async throws -> [InstanceSummary] {
-        let response: InstancesResponse = try await get(path: "instances?per_page=500")
-        return response.instances.map {
-            InstanceSummary(
-                id: $0.id,
-                label: $0.label ?? "",
-                mainIP: $0.mainIP ?? "",
-                region: $0.region ?? "",
-                allowedBandwidthGB: $0.allowedBandwidth
-            )
+        var summaries: [InstanceSummary] = []
+        var cursor: String?
+
+        // 跟着 meta.links.next 翻页。以前只取第一页就返回，账号实例超过一页时
+        // 后面那些会静默变成"配额未知"—— 没有任何报错，最难查的那种。
+        // 加一个页数上限，免得上游游标出问题时在这里转不出去。
+        for _ in 0..<20 {
+            var path = "instances?per_page=500"
+            if let cursor, !cursor.isEmpty {
+                path += "&cursor=\(cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cursor)"
+            }
+
+            let response: InstancesResponse = try await get(path: path)
+            summaries.append(contentsOf: response.instances.map {
+                InstanceSummary(
+                    id: $0.id,
+                    label: $0.label ?? "",
+                    mainIP: $0.mainIP ?? "",
+                    region: $0.region ?? "",
+                    allowedBandwidthGB: $0.allowedBandwidth
+                )
+            })
+
+            guard let next = response.meta?.links?.next, !next.isEmpty else { break }
+            cursor = next
         }
+
+        return summaries
     }
 
     // MARK: - Collector
@@ -86,10 +119,17 @@ public struct VultrCollector: Collector {
         }
 
         // 配额：只在用户没手填时才去问 API，省一次请求。
+        //
+        // 调度层若已经在本轮里拉过实例列表，会通过 quotaLookup 把结果传进来 ——
+        // 否则 N 台配额未填的 Vultr 实例就是 N 次全量列表请求，很容易撞上速率限制。
         var reportedQuota: Double?
         if server.quotaGB <= 0 {
-            let instances = try await listInstances()
-            reportedQuota = instances.first { $0.id == instanceId }?.allowedBandwidthGB
+            if let quotaLookup {
+                reportedQuota = quotaLookup[instanceId]
+            } else {
+                let instances = try await listInstances()
+                reportedQuota = instances.first { $0.id == instanceId }?.allowedBandwidthGB
+            }
         }
 
         let response: BandwidthResponse = try await get(path: "instances/\(instanceId)/bandwidth")
