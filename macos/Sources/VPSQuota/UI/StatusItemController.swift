@@ -11,6 +11,11 @@ import VPSQuotaCore
 /// macOS 26 起状态项由系统进程托管，应用这边拿到的按钮窗口有两个坑，都在这里绕开：
 /// 1. 显示器睡眠/重连后，按钮窗口的 frame 停在旧坐标不再更新（见 `resolveItemRect`）。
 /// 2. NSPopover 的 `.transient` 会把点击图标本身当成"点了面板外面"（见 `installDismissMonitors`）。
+///
+/// 此外还有第三种"看不见"：ControlCenter 按 bundle id 把状态项拉黑隐藏
+/// （触发器是 LaunchServices 死记录，拉黑是跨进程重启的粘性会话态）。
+/// 这属于"自愈"链路：见文末「状态项健康自愈」一节与
+/// `VPSQuotaCore/MenuBar/` 下的 `StatusItemHealth` / `LaunchServicesJanitor`。
 @MainActor
 final class StatusItemController: NSObject {
     private let model: AppModel
@@ -23,6 +28,31 @@ final class StatusItemController: NSObject {
     private var screenObserver: NSObjectProtocol?
     private var reinstallTask: Task<Void, Never>?
     private var lastReinstall = Date.distantPast
+
+    // MARK: - 健康自愈状态
+
+    private static let rebuildPolicy = StatusItemHealth.RebuildPolicy()
+    /// 状态项健康心跳间隔：太久会放大"图标不见了"的时长，太短则频繁无谓探测
+    private static let heartbeatInterval: TimeInterval = 300
+    /// 判定掉线后的快探测间隔
+    private static let probeInterval: TimeInterval = 15
+    /// 启动校验梯。登录自启时菜单栏服务未必就绪，隔着几档复查
+    private static let launchProbeLadder: [TimeInterval] = [2, 5, 15, 60]
+    /// 显示器重配置后这段时间内几何不可信，一律按 indeterminate 处理
+    private static let screenQuietWindow: TimeInterval = 3
+
+    private var heartbeatTimer: Timer?
+    private var healthCheckWorkItem: DispatchWorkItem?
+    private var wakeObservers: [NSObjectProtocol] = []
+    /// 重建要先异步清 LaunchServices 死记录，这段时间内再来的重建请求直接丢弃
+    private var isRebuilding = false
+    private var rebuildAttempts = 0
+    private var consecutiveDetached = 0
+    private var lastRebuildAt: Date?
+    private var healthySince: Date?
+    private var screenReconfigureUntil: Date?
+    /// `userHidden` 只尝试一次性拉回可见，之后尊重用户意图
+    private var didForceVisibleOnce = false
 
     /// 图标在屏幕上的矩形，由 `resolveItemRect` 在鼠标落在图标上时刷新。
     private var itemRect: NSRect?
@@ -71,6 +101,7 @@ final class StatusItemController: NSObject {
 
         sync()
         observeModel()
+        startSelfHealing()
     }
 
     // MARK: - 状态项的装卸
@@ -88,9 +119,14 @@ final class StatusItemController: NSObject {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // 重建状态项时保住它在菜单栏里的位置。
         item.autosaveName = "VPSQuota"
+        // 重建时显式拉回可见，避免坏的持久化可见性被沿用
+        item.isVisible = true
         statusItem = item
 
-        guard let button = item.button else { return }
+        guard let button = item.button else {
+            Log.menubar.error("状态项安装失败：button 为 nil，待健康检查重试")
+            return
+        }
         button.target = self
         button.action = #selector(handleClick)
 
@@ -111,7 +147,12 @@ final class StatusItemController: NSObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.scheduleReinstall() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    // 重配置期间几何不可信，先划一段静默窗口再查
+                    self.screenReconfigureUntil = Date().addingTimeInterval(Self.screenQuietWindow)
+                    self.scheduleHealthCheck(delay: 1.5, reason: "screenParams")
+                }
             }
         }
     }
@@ -396,5 +437,323 @@ final class StatusItemController: NSObject {
             return true
         }
         return pointerIsOverItem
+    }
+
+    // MARK: - 状态项健康自愈
+    //
+    // macOS 26 的 ControlCenter 按 bundle id 把被拉黑的状态项隐藏，应用侧的对象、
+    // frame、可点击性全部正常——纯几何判定会误判健康，用户就是"看不见图标"。
+    // 这里照 TokenBar 项目验证过的链路兜底：启动先清 LaunchServices 死记录（触发器），
+    // 再隔档校验"控制中心有没有为它渲染镜像"（最可靠的健康信号），
+    // 判定掉线则先清死记录再重建（顺序不能反：拉黑不解除时重建多少次都一样）。
+
+    /// 装好一次性的观察者与心跳，并启动时清理 + 校验梯。
+    /// 控制器整个应用生命周期只建一次（bootstrap 里有判重），无需幂等标志。
+    private func startSelfHealing() {
+        // 启动就把 LaunchServices 死记录清掉：等到判定掉线再清，要多白等一轮探测
+        Task { await purgeStaleLaunchServicesRecords(reason: "launch") }
+        // 登录自启时菜单栏服务未必已经就绪，隔着几档复查有没有真的拿到槽位
+        for delay in Self.launchProbeLadder {
+            scheduleHealthCheck(delay: delay, reason: "launch+\(Int(delay))s", coalescing: false)
+        }
+
+        // 与悬停轮询定时器同样注册到 .common mode，事件跟踪期间不被挂起。
+        // 掉线期间的快探测由 runHealthCheck 自调度，这条只是低频保底闹钟。
+        let heartbeat = Timer(timeInterval: Self.heartbeatInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.runHealthCheck(reason: "heartbeat") }
+        }
+        RunLoop.main.add(heartbeat, forMode: .common)
+        heartbeatTimer = heartbeat
+
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
+            let observer = workspaceCenter.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    // 唤醒会连发两个通知，只清连续计数；重建预算不清零，免得反复唤醒把它刷空
+                    self.consecutiveDetached = 0
+                    self.scheduleHealthCheck(delay: 2.0, reason: "wake")
+                }
+            }
+            wakeObservers.append(observer)
+        }
+    }
+
+    /// 显示器重配置 / 唤醒等通知会连发多次，健康检查合并到最后一次之后再跑。
+    /// - Parameter coalescing: 启动校验梯要的是"每一档都跑"，那里传 false 各自独立排期
+    private func scheduleHealthCheck(delay: TimeInterval, reason: String, coalescing: Bool = true) {
+        guard coalescing else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.runHealthCheck(reason: reason)
+            }
+            return
+        }
+        healthCheckWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.runHealthCheck(reason: reason)
+        }
+        healthCheckWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func runHealthCheck(reason: String) {
+        // 用户在设置里关掉了菜单栏项：没有状态项是预期状态，不是故障
+        guard model.displayMode.showsMenuBarItem else { return }
+        // 误判闸门：面板开着、或鼠标按着（可能正在拖图标），这时的几何都不作数
+        guard !popover.isShown, NSEvent.pressedMouseButtons == 0 else {
+            scheduleHealthCheck(delay: 5, reason: "deferred-\(reason)")
+            return
+        }
+        if let until = screenReconfigureUntil, Date() < until {
+            scheduleHealthCheck(delay: Self.probeInterval, reason: "reconfiguring-\(reason)")
+            return
+        }
+        screenReconfigureUntil = nil
+
+        let snapshot = statusItemSnapshot()
+        let verdict = StatusItemHealth.evaluate(snapshot)
+        logStatusItemState(reason: reason, snapshot: snapshot, verdict: verdict)
+
+        switch verdict {
+        case .indeterminate:
+            scheduleHealthCheck(delay: Self.probeInterval, reason: "indeterminate")
+
+        case .userHidden:
+            consecutiveDetached = 0
+            if !didForceVisibleOnce {
+                didForceVisibleOnce = true
+                statusItem?.isVisible = true
+                Log.menubar.error("状态项 isVisible=false（疑似被拖出菜单栏），一次性尝试恢复可见后不再干预")
+            }
+
+        case .healthy:
+            consecutiveDetached = 0
+            if healthySince == nil { healthySince = Date() }
+            if Self.rebuildPolicy.shouldResetAttempts(now: Date(), healthySince: healthySince) {
+                rebuildAttempts = 0
+            }
+            // 内容幂等重刷 + 轻推布局：它治的是"位置还在、图标不画了"那种托管渲染丢失
+            nudgeStatusItemLayout()
+
+        case .detached:
+            healthySince = nil
+            consecutiveDetached += 1
+            let decision = Self.rebuildPolicy.decide(
+                verdict: verdict,
+                consecutiveDetached: consecutiveDetached,
+                attempts: rebuildAttempts,
+                now: Date(),
+                lastRebuildAt: lastRebuildAt
+            )
+            switch decision {
+            case .wait(let seconds):
+                scheduleHealthCheck(delay: max(seconds, Self.probeInterval), reason: "backoff")
+            case .rebuild:
+                rebuildStatusItem(reason: verdict.logDescription, clearAutosaveState: false)
+            case .resetAutosaveThenRebuild:
+                rebuildStatusItem(reason: verdict.logDescription, clearAutosaveState: true)
+            case .giveUp:
+                Log.menubar.error("状态项重建预算耗尽（\(self.rebuildAttempts, privacy: .public) 次），停止自愈")
+            }
+        }
+    }
+
+    /// 可重入的重建入口：先异步清 LaunchServices 死记录再换新的状态项。
+    /// 被 ControlCenter 拉黑的根因在死记录，不先清掉，重建多少次都一样被隐藏。
+    private func rebuildStatusItem(reason: String, clearAutosaveState: Bool) {
+        guard !isRebuilding else { return }
+        isRebuilding = true
+        Task { [weak self] in
+            let purged = await self?.purgeStaleLaunchServicesRecords(reason: "rebuild") ?? 0
+            guard let self else { return }
+            self.isRebuilding = false
+            self.performRebuild(reason: reason, clearAutosaveState: clearAutosaveState, purgedRecords: purged)
+        }
+    }
+
+    private func performRebuild(reason: String, clearAutosaveState: Bool, purgedRecords: Int) {
+        // 弹窗锚定在独立的 anchor 窗口上，换状态项不影响它，但重建后坐标必然过期，先收起
+        if popover.isShown { hide() }
+
+        if clearAutosaveState {
+            // 持久化位置被写坏时，带 autosaveName 重建会把坏状态一并还原回来
+            let defaults = UserDefaults.standard
+            defaults.removeObject(forKey: "NSStatusItem Preferred Position VPSQuota")
+            defaults.removeObject(forKey: "NSStatusItem Visible VPSQuota")
+            Log.menubar.error("已清除状态项持久化位置键：autosave=VPSQuota")
+        }
+
+        removeStatusItem()
+        install()
+        updateButton()
+
+        rebuildAttempts += 1
+        lastRebuildAt = Date()
+        consecutiveDetached = 0
+        Log.menubar.error(
+            """
+            状态项重建：原因=\(reason, privacy: .public) 第\(self.rebuildAttempts, privacy: .public)次 \
+            clearAutosave=\(clearAutosaveState, privacy: .public) 清理LS死记录=\(purgedRecords, privacy: .public)
+            """)
+        scheduleHealthCheck(delay: 1.5, reason: "post-rebuild")
+    }
+
+    private func statusItemSnapshot() -> StatusItemHealth.Snapshot {
+        let screens = NSScreen.screens.map {
+            StatusItemHealth.ScreenGeometry(frame: $0.frame, visibleFrame: $0.visibleFrame)
+        }
+        let button = statusItem?.button
+        let window = button?.window
+        return StatusItemHealth.Snapshot(
+            hasItem: statusItem != nil,
+            hasButton: button != nil,
+            isVisible: statusItem?.isVisible ?? false,
+            buttonWidth: button?.bounds.width ?? 0,
+            windowFrame: window?.frame,
+            windowNumber: window?.windowNumber,
+            registeredInWindowServer: window.flatMap { windowIsRegistered($0) },
+            mirroredByMenuBarHost: window.flatMap { menuBarHostMirrors($0.frame) },
+            screens: screens
+        )
+    }
+
+    /// 控制中心是否为这个状态项窗口渲染了菜单栏镜像。
+    ///
+    /// macOS 26：每个真正显示出来的状态项，在 layer-25 层都有一个 onscreen 的控制中心窗口，
+    /// 与应用自己那个离屏的状态项窗口同 x 同宽。被 ControlCenter 放进 blocked list 隐藏的
+    /// 状态项没有这条镜像 —— 这是目前最可靠的健康信号，几何判定只是辅助（被 block 的状态项
+    /// frame 也可能停在正常位置）。查询失败返回 nil，让该信号被忽略。
+    private func menuBarHostMirrors(_ frame: NSRect) -> Bool? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for info in list {
+            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 25,
+                  (info[kCGWindowOwnerPID as String] as? Int32) != ownPID,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let width = bounds["Width"], let height = bounds["Height"],
+                  height <= 40                                  // 只认菜单栏那一排，排除弹窗
+            else { continue }
+            if abs(x - frame.minX) <= 2, abs(width - frame.width) <= 2 {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 按窗口号反查 CGWindowList。
+    ///
+    /// 只查自己的窗口号、只读 bounds（`kCGWindowName` 才需要屏幕录制权限），查不了就返回 nil
+    /// 让这个信号被忽略。**绝不能看 `kCGWindowIsOnscreen`** —— macOS 26 上健康的第三方状态项
+    /// 自己的窗口也是 offscreen，真正上屏的是控制中心的镜像窗口。
+    private func windowIsRegistered(_ window: NSWindow) -> Bool? {
+        guard window.windowNumber > 0 else { return false }
+        // macOS 26 上状态项窗口托管在系统进程，本进程拿到的 windowNumber 是个超出
+        // CGWindowID(UInt32) 范围的占位值（实测健康状态项为 4294967296 = 2^32）。
+        // 这种窗口号查不了窗口服务器，返回 nil 让该信号被忽略 ——
+        // 当成 false 会把健康的状态项判成掉线、反复重建。
+        guard window.windowNumber <= Int(UInt32.max) else { return nil }
+
+        // 全量枚举再按窗口号过滤，而不是带 on-screen 语义的查询：
+        // 状态项窗口本身是离屏的，只有控制中心的镜像窗口才上屏。
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+
+        for info in list {
+            guard let number = info[kCGWindowNumber as String] as? Int,
+                  number == window.windowNumber else { continue }
+            guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
+                  let width = bounds["Width"], let height = bounds["Height"] else { return false }
+            return width > 0 && height > 0
+        }
+        return false
+    }
+
+    private static func describe(_ rect: NSRect?) -> String {
+        guard let rect else { return "nil" }
+        return String(format: "%.0f,%.0f %.0fx%.0f", rect.minX, rect.minY, rect.width, rect.height)
+    }
+
+    private func logStatusItemState(
+        reason: String,
+        snapshot: StatusItemHealth.Snapshot? = nil,
+        verdict: StatusItemHealth.Verdict? = nil
+    ) {
+        let snapshot = snapshot ?? statusItemSnapshot()
+        let verdict = verdict ?? StatusItemHealth.evaluate(snapshot)
+        let registered = snapshot.registeredInWindowServer.map(String.init(describing:)) ?? "?"
+        let mirrored = snapshot.mirroredByMenuBarHost.map(String.init(describing:)) ?? "?"
+        // 普通字符串拼接不能用 privacy: 插值（那是 OSLogMessage 字面量专属），
+        // 先拼好整行再整体以 public 传给 Logger。内容全是非敏感的诊断值。
+        let line = """
+        状态项[\(reason)] verdict=\(verdict.logDescription) \
+        visible=\(snapshot.isVisible) btnW=\(Int(snapshot.buttonWidth)) win=\(Self.describe(snapshot.windowFrame)) \
+        winNum=\(snapshot.windowNumber ?? -1) mirror=\(mirrored) reg=\(registered) \
+        screens=\(snapshot.screens.count) rebuilds=\(self.rebuildAttempts) detachedRun=\(self.consecutiveDetached)
+        """
+        if case .healthy = verdict {
+            Log.menubar.info("\(line, privacy: .public)")
+        } else {
+            Log.menubar.error("\(line, privacy: .public)")
+        }
+    }
+
+    /// 幂等重刷按钮内容，再用"定长 → 变长"轻推状态项，迫使 NSStatusBar 重新布局并同步
+    /// 托管窗口 frame。净宽度不变，不产生可见跳动。
+    ///
+    /// 它治的只是"位置还在、图标不画了"的托管渲染丢失；状态项压根没拿到菜单栏槽位
+    /// （被拉黑）时轻推无效，那种故障归 `rebuildStatusItem` 管。
+    private func nudgeStatusItemLayout() {
+        guard let item = statusItem, !popover.isShown else { return }
+        updateButton()
+        item.length = NSStatusItem.squareLength
+        item.length = NSStatusItem.variableLength
+    }
+
+    /// 清掉本 bundle id 在 LaunchServices 里指向已不存在路径的陈旧注册，返回注销条数。
+    ///
+    /// dump 是全量输出（本机 ~1 秒、几十 MB），放后台队列跑，日志与结果回主线程。
+    /// 查不了不能静默：否则会被误读成"核对过、没问题"。
+    private func purgeStaleLaunchServicesRecords(reason: String) async -> Int {
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              FileManager.default.isExecutableFile(atPath: LaunchServicesJanitor.lsregisterPath) else {
+            Log.menubar.error("LaunchServices 死记录清理[\(reason, privacy: .public)]：找不到可执行的 lsregister，跳过核对")
+            return 0
+        }
+        let dumpResult: [String]? = await Task.detached(priority: .utility) {
+            LaunchServicesJanitor.staleLaunchServicesPaths(bundleID: bundleID)
+        }.value
+        guard let stale = dumpResult else {
+            // error 级：这条排查线（hardened runtime 下工具是否可用）必须能事后倒查
+            Log.menubar.error("LaunchServices 死记录清理[\(reason, privacy: .public)]：dump 执行失败，跳过核对")
+            return 0
+        }
+
+        var purged = 0
+        var uncleanable: [String] = []
+        for path in stale {
+            let ok: Bool = await Task.detached(priority: .utility) {
+                LaunchServicesJanitor.unregisterRecord(atPath: path, bundleID: bundleID)
+            }.value
+            if ok { purged += 1 } else { uncleanable.append(path) }
+        }
+
+        if !stale.isEmpty {
+            Log.menubar.error(
+                "LaunchServices 死记录清理[\(reason, privacy: .public)]：发现 \(stale.count, privacy: .public) 条，注销 \(purged, privacy: .public) 条")
+        } else {
+            Log.menubar.notice("LaunchServices 注册核对[\(reason, privacy: .public)]：无死记录")
+        }
+        if !uncleanable.isEmpty {
+            let list = uncleanable.joined(separator: " | ")
+            Log.menubar.error(
+                """
+                LaunchServices 死记录清理[\(reason, privacy: .public)]：\(uncleanable.count, privacy: .public) 条无法自动注销\
+                （路径不可写，如已卸载的卷，需重新挂载对应卷或人工处理）：\(list, privacy: .public)
+                """)
+        }
+        return purged
     }
 }

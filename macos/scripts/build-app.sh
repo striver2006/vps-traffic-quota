@@ -1,14 +1,36 @@
 #!/bin/bash
 # 把 SwiftPM 产出的可执行文件组装成可双击运行的 .app bundle。
 #
+# 用法: ./scripts/build-app.sh [release|debug] [--install] [--clean]
+#   默认          : 组装 build/VPSQuota.app（日常开发/自用）
+#   --install     : 构建后先注销再替换 /Applications 里的安装版并启动。
+#                   绝不要用 cp -R 安装（目标已存在时会嵌套成 VPSQuota.app/VPSQuota.app）。
+#   --clean       : 先向 LaunchServices 注销构建产物路径再删除，然后退出（不构建）。
+#
 # 之所以不用 Xcode 工程：SwiftPM 的包描述是纯文本、可 diff、可在命令行完整验证，
 # 而菜单栏应用需要的只是一个正确的 bundle 结构和 Info.plist —— 手工组装完全够用。
+#
+# macOS 26 的 ControlCenter 按 bundle id 查 LaunchServices：撞上一条路径已不存在的
+# 陈旧注册记录（死记录）就会把状态项拉黑隐藏（见 docs/TROUBLESHOOTING_菜单栏图标不显示.md）。
+# 删任何被注册过的 .app（构建产物、安装版）之前都必须先 lsregister -u 注销，
+# 所以删除构建产物一律走 --clean，别直接 rm。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-CONFIGURATION="${1:-release}"
+CONFIGURATION="release"
+INSTALL=0
+CLEAN=0
+for arg in "$@"; do
+    case "$arg" in
+        release|debug) CONFIGURATION="$arg" ;;
+        --install) INSTALL=1 ;;
+        --clean) CLEAN=1 ;;
+        *) echo "未知参数: $arg（可用: release debug --install --clean）" >&2; exit 1 ;;
+    esac
+done
+
 APP_NAME="VPSQuota"
 DISPLAY_NAME="VPS 流量"
 BUNDLE_ID="io.vpsquota.VPSTrafficQuota"
@@ -17,6 +39,22 @@ VERSION="1.0.0"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
+
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+# 删除 .app 之前先注销它的 LaunchServices 注册；路径不存在或 lsregister 不可用时静默跳过
+unregister_ls() {
+    [ -d "$1" ] && [ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$1" >/dev/null 2>&1 || true
+}
+
+if [ "$CLEAN" -eq 1 ]; then
+    echo "==> 注销 LaunchServices 注册并删除构建产物..."
+    unregister_ls "$APP_DIR"
+    rm -rf "$APP_DIR"
+    # 图标中间产物不是 bundle、不进 LaunchServices，直接删
+    rm -rf "$ROOT/build/$APP_NAME.iconset" "$ROOT/build/$APP_NAME.icns"
+    echo "==> 清理完成。/Applications 里的安装版未动（要卸载它：注销 + 删除 /Applications/$APP_NAME.app）"
+    exit 0
+fi
 
 echo "==> 编译（${CONFIGURATION}）"
 swift build -c "$CONFIGURATION" --product "$APP_NAME"
@@ -29,6 +67,8 @@ swift "$ROOT/scripts/make-icon.swift" "$ROOT/build"
 iconutil -c icns "$ROOT/build/VPSQuota.iconset" -o "$ROOT/build/VPSQuota.icns"
 
 echo "==> 组装 $APP_DIR"
+# 先注销再删：万一本次构建中途失败收场，也不会留下指向本路径的 LaunchServices 死记录
+unregister_ls "$APP_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
@@ -224,9 +264,31 @@ if [ "${NOTARIZE:-0}" = "1" ]; then
     echo "    Gatekeeper：$(spctl -a -vv "$APP_DIR" 2>&1 | tail -1)"
 fi
 
+# ── 安装（仅 --install）────────────────────────
+# 替换 /Applications 里的安装版。三个纪律：
+# 1. 先退出正在运行的实例（文件被换掉时旧进程仍占着旧 inode，行为不可预期）；
+# 2. 先 lsregister -u 再删旧安装版，不留死记录；
+# 3. 必须用 ditto 而不是 cp -R —— cp -R 在目标 .app 已存在时会嵌套成
+#    /Applications/VPSQuota.app/VPSQuota.app（且同样制造死记录）。
+if [ "$INSTALL" -eq 1 ]; then
+    echo "==> 安装到 /Applications"
+    INSTALLED="/Applications/$APP_NAME.app"
+    if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+        echo "    先退出正在运行的 $APP_NAME"
+        killall "$APP_NAME" 2>/dev/null || true
+        sleep 1
+    fi
+    unregister_ls "$INSTALLED"
+    rm -rf "$INSTALLED"
+    ditto "$APP_DIR" "$INSTALLED"
+    open -a "$INSTALLED"
+    echo "    已启动。健康日志（另开终端）："
+    echo "      command log stream --predicate 'subsystem == \"$BUNDLE_ID\"' --level debug --style compact"
+fi
+
 echo ""
 echo "✅ 已生成：$APP_DIR"
 echo ""
-echo "运行：      open \"$APP_DIR\""
-echo "安装到应用：cp -R \"$APP_DIR\" /Applications/"
+echo "安装到应用：./scripts/build-app.sh --install   （别用 cp -R，会嵌套且制造死记录）"
+echo "删除构建产物：./scripts/build-app.sh --clean    （先注销 LaunchServices 再删）"
 echo "开机自启：  应用内「设置 → 启动 → 登录时启动」"

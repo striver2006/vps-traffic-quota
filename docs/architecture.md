@@ -190,6 +190,14 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 「呈现方式」偏好存在 UserDefaults 而不是 `config.json` —— 它是 macOS 专属的界面设置，
 不该混进两端共用、可互相拷贝的那份配置。
 
+**macOS 26 还会按 bundle id 拉黑状态项**（触发器是 LaunchServices 死记录，拉黑是跨进程
+重启的粘性会话态）：应用侧对象、frame、可点击性全部正常，用户就是看不见图标。对策分三层：
+`StatusItemHealth` 用「控制中心有没有为它渲染镜像」做健康判定（几何判定会被骗过），
+`LaunchServicesJanitor` 在启动与每次重建前清死记录（唯一可行方式是原位重建 stub 再
+`lsregister -u`），`build-app.sh` 在删任何被注册过的 .app 之前先注销（`--clean` / `--install`）。
+已经存在的拉黑无法在应用内解除，需要注销重登/重启一次。机制详录见
+[`TROUBLESHOOTING_菜单栏图标不显示.md`](TROUBLESHOOTING_菜单栏图标不显示.md)。
+
 **开机自启同样不进 `config.json`**，而且连本地偏好都不存：它是「这台机器上的这次安装」
 的属性，配置文件拷到另一台机器上时不该把它带过去。两端各自把状态交给系统持有 ——
 macOS 用 `SMAppService.mainApp`（登记的是 bundle 本身，在「系统设置 → 登录项」里认得出来），
