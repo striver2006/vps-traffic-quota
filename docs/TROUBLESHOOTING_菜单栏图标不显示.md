@@ -14,10 +14,21 @@
 | 观察 | 表现 |
 | :--- | :--- |
 | 应用侧日志 | `状态项[…] verdict=detached(notMirrored) … mirror=false`（error 级），重建后依旧 |
-| 几何 | frame 可以完全正常，**纯几何判定会误判健康** |
-| ControlCenter 日志 | `Moving host to blocked list; (bid:io.vpsquota.VPSTrafficQuota-VPSQuota-<pid>)`，出现在 host 创建后 ~20ms |
+| ControlCenter 日志 | 运行中被拉黑：`Moving host to blocked list`（host 创建后 ~20ms）；启动时就已被拉黑：`Starting to track blocked host` |
 | 重启应用 / 重建状态项 | 无效 —— 每个新 PID 照样秒拒 |
 | 应用界面 | 主窗口与设置界面顶部出现「菜单栏图标被系统隐藏」横幅 |
+
+**状态项窗口的 frame 有两种形态，判定必须同时认得**（2026-09-14 真机实测）：
+
+| 场景 | frame | 说明 |
+| :--- | :--- | :--- |
+| 运行中被拉黑 | `2651,1418 79x22` | 保留着之前拿到的位置，`maxY` 仍贴齐屏幕顶边 —— **纯几何判定会判它 healthy**，只能靠镜像信号识别 |
+| 启动 / 重建时已被拉黑 | `0,-22 79x22` | 从未被布局。ControlCenter 不给槽位，AppKit 就永远不会布局它，**且不会自己恢复** |
+
+第二种形态是个陷阱：它落在所有屏幕之外，看起来像"几何跑飞"，但判成 `offMenuBar`
+就会去走结构性重建梯（重建对拉黑无效），永远到不了 `blockedBySystem`，横幅也就永远不出现。
+`StatusItemHealth.evaluate` 里"窗口不与任何屏幕相交 → `notMirrored`"这条判定专治此症，
+有回归测试锁着，别去动它的顺序。
 
 **最可靠的健康信号是"控制中心有没有为它渲染镜像"**（layer-25、onscreen、同 x 同宽的
 ControlCenter 窗口），应用内已实现（`MenuBarMirror.isMirrored`）；`mirror=false` 基本
@@ -165,8 +176,9 @@ open -a VPSQuota
     （连续 2 次确认、30/60 秒指数退避、预算 3 次、最后一次先清 autosave 持久化键），
     耗尽后 `giveUp`（停重建、心跳继续），不等于被拉黑。
 - **探测节奏**：启动校验梯 `launch+2s/5s/15s/60s`，5 分钟心跳，显示器重配置/唤醒后复查，
-  系统设置被激活后 2 秒复查（用户多半正从那儿放行回来）；
-  面板开着或鼠标按着时跳过（几何不作数）。
+  系统设置**激活与失活**时各复查一次；面板开着或鼠标按着时跳过（几何不作数）。
+  失活那次不能省：开关是在系统设置已经在前台时点的，那一下不产生任何激活事件，
+  只盯激活的话状态变化要等最长一整轮心跳（真机上等了 5 分钟）。有它才是 ~1 秒响应。
 - 没有 Dock 图标时，进入拉黑终态会把主窗口顶出来一次 —— 否则用户没有任何能看到横幅的入口。
 
 ## 七、手动排查手册
@@ -198,9 +210,25 @@ command log stream --predicate 'subsystem == "io.vpsquota.VPSTrafficQuota"' --le
 
 预期（健康）：`状态项[launch+2s] verdict=healthy … mirror=true frameOK=true state=healthy`。
 
-若持续 `verdict=detached(notMirrored) … mirror=false` 并最终出现
-`状态项被 ControlCenter 拉黑隐藏`，回到第四节 —— 打开负责它那一行的开关即可，
-**不需要重启应用，更不需要重启系统**。
+被拉黑时的完整序列（2026-09-14 真机实测，从启动到判定 14 秒）：
+
+```
+launch+2s    verdict=detached(notMirrored) win=0,-22  state=unknown
+launch+5s    verdict=detached(notMirrored)            → 状态项重建：结构性=0次 镜像=1次
+post-rebuild verdict=detached(notMirrored) win=0,-22  （重建也拿不到槽位）
+launch+15s   状态项被 ControlCenter 拉黑隐藏：重建无效，已停止重建
+launch+60s   state=blockedBySystem                    （只 probe，零重建）
+```
+
+放行后（实测 0.85 秒）：
+
+```
+ControlCenter  Unblocking host; (bid:io.vpsquota.VPSTrafficQuota-VPSQuota-<pid>)
+应用           verdict=healthy mirror=true → 菜单栏拉黑已解除，状态项恢复渲染
+               state=healthy mirrorRebuilds=0（重建预算已归还）
+```
+
+**不需要重启应用，更不需要重启系统。**
 
 ---
 *2026-09-14 修订：根因由受控实验（解码 `trackedApplications`）确定，

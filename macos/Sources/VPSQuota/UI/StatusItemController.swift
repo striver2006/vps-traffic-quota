@@ -484,15 +484,18 @@ final class StatusItemController: NSObject {
         heartbeatTimer = heartbeat
 
         let workspaceCenter = NSWorkspace.shared.notificationCenter
-        // 用户多半是照着横幅去系统设置放行的。切回来时立刻复查，省掉最多一整轮 60s 等待。
-        let settingsObserver = workspaceCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            guard app?.bundleIdentifier == "com.apple.systempreferences" else { return }
-            Task { @MainActor in self?.scheduleHealthCheck(delay: 2.0, reason: "settingsActivated") }
+        // 用户多半正在系统设置里开关那一行。激活时复查是为了"放行后立刻恢复"，
+        // 失活时复查是因为**开关是在系统设置已经在前台时点的**，那一下不产生任何激活事件 ——
+        // 只盯激活的话，状态变化要等最长一整轮心跳才发现（真机实测等了 5 分钟）。
+        for name in [NSWorkspace.didActivateApplicationNotification,
+                     NSWorkspace.didDeactivateApplicationNotification] {
+            let observer = workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard app?.bundleIdentifier == "com.apple.systempreferences" else { return }
+                Task { @MainActor in self?.scheduleHealthCheck(delay: 2.0, reason: "settingsChanged") }
+            }
+            wakeObservers.append(observer)
         }
-        wakeObservers.append(settingsObserver)
 
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
             let observer = workspaceCenter.addObserver(
@@ -620,11 +623,14 @@ final class StatusItemController: NSObject {
         // 重建的记账（次数、时刻、连续计数清零）在 SelfHealingMachine 里，这里只管执行
         Log.menubar.error(
             """
-            状态项重建：原因=\(reason, privacy: .public) 第\(self.healing.attempts, privacy: .public)次 \
-            镜像重建=\(self.healing.mirrorRebuilds, privacy: .public) \
+            状态项重建：原因=\(reason, privacy: .public) \
+            结构性=\(self.healing.attempts, privacy: .public)次 \
+            镜像=\(self.healing.mirrorRebuilds, privacy: .public)次 \
             clearAutosave=\(clearAutosaveState, privacy: .public)
             """)
-        scheduleHealthCheck(delay: 1.5, reason: "post-rebuild")
+        // 3 秒而不是 1.5：新状态项窗口要等 AppKit 布局才拿到坐标，
+        // 查得太早会看到 (0, -h) 的未布局形态，把健康的重建误判成没拿到槽位
+        scheduleHealthCheck(delay: 3.0, reason: "post-rebuild")
     }
 
     private func statusItemSnapshot() -> StatusItemHealth.Snapshot {
@@ -685,11 +691,9 @@ final class StatusItemController: NSObject {
            (lastFrameTrustedAt.map { $0 < stale } ?? true) {
             return false
         }
-        // 3. frame 落在所有现存屏幕之外：典型的旧显示器布局残留。
-        //    这条同时覆盖"从没人把鼠标移上去过"的冷启动场景（两个时间戳都是 nil）。
-        guard let frame = statusItem?.button?.window?.frame,
-              NSScreen.screens.contains(where: { $0.frame.intersects(frame) })
-        else { return false }
+        // 刻意**不**把"frame 落在所有屏幕之外"算作不可信：那不是坐标过期，
+        // 而是状态项压根没拿到菜单栏槽位（拉黑的直接表现），由 evaluate 判成 notMirrored。
+        // 放在这里会把唯一能识别拉黑的信号永久作废 —— 真机上踩过。
         return true
     }
 

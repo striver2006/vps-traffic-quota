@@ -17,18 +17,22 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 340)
-        } detail: {
-            detail
-        }
-        .frame(minWidth: 820, minHeight: 520)
-        .safeAreaInset(edge: .top, spacing: 0) {
+        // 横幅放在 NavigationSplitView **外面**的 VStack 里，不要用 .safeAreaInset 包它：
+        // inset 会被分别传播给 sidebar 和 detail 两个栏，渲染成两条宽度不同、
+        // 互相叠印、还压在内容上的横幅（真机上踩过）。
+        VStack(spacing: 0) {
             if model.menuBarBlockedBySystem {
                 MenuBarBlockedBanner(compact: false) { model.openMenuBarSettings() }
+                Divider()
+            }
+            NavigationSplitView {
+                sidebar
+                    .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 340)
+            } detail: {
+                detail
             }
         }
+        .frame(minWidth: 820, minHeight: 520)
         .navigationTitle("VPS 流量")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

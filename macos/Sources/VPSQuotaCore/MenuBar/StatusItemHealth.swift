@@ -129,6 +129,14 @@ public enum StatusItemHealth {
         guard frame.width > 0, frame.height > 0 else { return .detached(.zeroWindowSize) }
         guard snapshot.buttonWidth > 0 else { return .detached(.zeroButtonWidth) }
 
+        // 窗口完全落在所有屏幕之外 —— 它压根没被放到菜单栏上。
+        // 真机实测（2026-09-14）：被拉黑时重建出来的状态项窗口永远停在 (0, -22)，
+        // 因为 ControlCenter 不给它槽位，AppKit 就永远不会布局它，而且不会自己恢复。
+        // 这条必须排在菜单栏带判定之前并判成 notMirrored：判成 offMenuBar 会让它走
+        // 结构性重建梯（重建对拉黑无效），永远到不了 blockedBySystem，横幅也就永远不出现。
+        let onSomeScreen = snapshot.screens.contains { $0.frame.intersects(frame) }
+        guard onSomeScreen else { return .detached(.notMirrored) }
+
         // 几何判定在前：它只依赖 AppKit 自己的数字，比窗口服务器那条信号可靠。
         let onMenuBar = snapshot.screens.contains { screen in
             MenuBarBand.isInMenuBarBand(

@@ -212,6 +212,24 @@ struct StatusItemHealthTests {
         #expect(decide(attempts: 3, secondsSinceLastRebuild: 10) == .giveUp)
     }
 
+    @Test("窗口停在屏幕外（从未被布局）判为没拿到槽位，而不是几何跑飞")
+    func neverLaidOutWindowIsNotMirrored() {
+        // 真机实测（2026-09-14）：被拉黑时重建出来的状态项窗口永远停在 (0, -22)，
+        // ControlCenter 不给槽位 AppKit 就不布局它，而且不会自己恢复。
+        // 判成 offMenuBar 会让它走结构性重建梯，永远到不了 blockedBySystem。
+        let neverLaidOut = makeSnapshot(windowFrame: CGRect(x: 0, y: -22, width: 79, height: 22))
+        #expect(StatusItemHealth.evaluate(neverLaidOut) == .detached(.notMirrored))
+
+        // 镜像信号查不到时同样成立 —— 这正是那条路径上的实际形态
+        let noMirrorSignal = makeSnapshot(
+            windowFrame: CGRect(x: 0, y: -22, width: 79, height: 22), mirrored: nil)
+        #expect(StatusItemHealth.evaluate(noMirrorSignal) == .detached(.notMirrored))
+
+        // 对照：在屏幕内但越出菜单栏带，仍然是结构性的 offMenuBar（重建对它有用）
+        #expect(StatusItemHealth.evaluate(makeSnapshot(windowFrame: detachedRect))
+                == .detached(.offMenuBar))
+    }
+
     @Test("预算最后一次先清 autosave 再重建，之后放弃")
     func policyLastAttemptClearsAutosaveThenGivesUp() {
         #expect(decide(attempts: 2, secondsSinceLastRebuild: 300) == .resetAutosaveThenRebuild)
