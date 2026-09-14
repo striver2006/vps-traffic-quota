@@ -126,7 +126,11 @@ struct VPSQuotaApp: App {
         // 主窗口在启动时一定会被创建（设置窗口才是 suppressed 的），
         // 所以这里也是唯一一处保证会执行到的装配点。
         if appDelegate.statusItem == nil {
-            appDelegate.statusItem = StatusItemController(model: model)
+            let controller = StatusItemController(model: model)
+            // 被 ControlCenter 拉黑时图标看不见；没有 Dock 图标的话，
+            // 用户连一个能看到告知横幅的窗口都打不开，得由自愈链路把主窗口顶出来。
+            controller.presentFallbackWindow = appDelegate.openMainWindow
+            appDelegate.statusItem = controller
         }
 
         // 启动流程也放这里，而不是挂在某个视图的 .task 上。

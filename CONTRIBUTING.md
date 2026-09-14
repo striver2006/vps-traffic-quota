@@ -16,7 +16,14 @@ cd macos
 swift build          # 编译全部 target（含 UI 与 CLI）
 swift test           # 跑单元测试
 ./scripts/build-app.sh   # 组装 build/VPSQuota.app
+open build/VPSQuota.app  # 运行调试版
 ```
+
+> **不要在 VS Code 等 IDE 的集成终端里直接跑 `swift run` 或 `.build/debug/VPSQuota`。**
+> 那样进程的「负责进程」是 IDE，ControlCenter 会把菜单栏项归到 IDE 名下，
+> 随它一起被拉黑 —— 表现是图标凭空消失，而且归属不会自动清理。
+> 一律用 `open`（由 launchd 负责）。详见
+> [`docs/TROUBLESHOOTING_菜单栏图标不显示.md`](docs/TROUBLESHOOTING_菜单栏图标不显示.md)。
 
 ```powershell
 # Windows

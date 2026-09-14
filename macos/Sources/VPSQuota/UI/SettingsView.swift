@@ -155,6 +155,10 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if model.menuBarBlockedBySystem {
+                    // 图标不见时用户多半先来这里翻「显示方式」，提示挂在这一节最省事
+                    MenuBarBlockedBanner(compact: true) { model.openMenuBarSettings() }
+                }
             } header: {
                 Text("呈现方式")
             }

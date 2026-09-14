@@ -24,6 +24,11 @@ struct MainWindowView: View {
             detail
         }
         .frame(minWidth: 820, minHeight: 520)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.menuBarBlockedBySystem {
+                MenuBarBlockedBanner(compact: false) { model.openMenuBarSettings() }
+            }
+        }
         .navigationTitle("VPS 流量")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

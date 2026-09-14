@@ -3,7 +3,7 @@ import Testing
 import CoreGraphics
 @testable import VPSQuotaCore
 
-/// 状态项健康判定与重建退避。用例移植自 TokenBar 项目（几何取自 macOS 26 真机实测）。
+/// 状态项健康判定与重建退避（几何取自 macOS 26 真机实测）。
 ///
 /// 健康基线：菜单栏带高 30、visibleFrame 顶边 1410，健康状态项窗口 frame
 /// `(2661, 1410, 80, 30)` —— maxY 正好贴齐屏幕顶边。
@@ -208,16 +208,14 @@ struct StatusItemHealthTests {
             Issue.record("应仍在退避窗口内"); return
         }
         #expect(abs(second - 50) < 0.5)
-        guard case .wait(let third) = decide(attempts: 3, secondsSinceLastRebuild: 10) else {
-            Issue.record("应仍在退避窗口内"); return
-        }
-        #expect(abs(third - 110) < 0.5)
+        // 结构性预算是 3 次，attempts=3 时已经耗尽，不再有第三段退避窗口
+        #expect(decide(attempts: 3, secondsSinceLastRebuild: 10) == .giveUp)
     }
 
     @Test("预算最后一次先清 autosave 再重建，之后放弃")
     func policyLastAttemptClearsAutosaveThenGivesUp() {
-        #expect(decide(attempts: 4, secondsSinceLastRebuild: 300) == .resetAutosaveThenRebuild)
-        #expect(decide(attempts: 5, secondsSinceLastRebuild: 900) == .giveUp)
+        #expect(decide(attempts: 2, secondsSinceLastRebuild: 300) == .resetAutosaveThenRebuild)
+        #expect(decide(attempts: 3, secondsSinceLastRebuild: 900) == .giveUp)
     }
 
     @Test("连续健康够久后重建预算还回去")
@@ -229,77 +227,236 @@ struct StatusItemHealthTests {
     }
 }
 
-/// `lsregister -dump` 解析：找出本 bundle id 下路径已不存在的陈旧注册。
-/// 样本照抄真实 dump 的格式（80 个 `-` 分隔、字段值前对齐空白、path 末尾 ` (0x…)` 序号）。
-@Suite("LaunchServices dump 解析")
-struct LaunchServicesDumpParsingTests {
-    private let separator = String(repeating: "-", count: 80)
 
-    private func record(identifier: String, path: String, seq: String) -> String {
-        """
-        \(separator)
-        container:                  / (0x4)
-        path:                       \(path) (\(seq))
-        identifier:                 \(identifier)
-        version:                    1.0 ({length = 32, bytes = 0x01000000 ... })
-        executable:                 Contents/MacOS/VPSQuota
-        type code:                  'APPL' (4150504c)
-        """
+/// 自愈编排。核心不变量：**确认被系统拉黑之后，永远不再重建。**
+/// 拉黑按 bundle id 命中，每个新 PID 照样秒拒；继续重建只会让图标反复闪、
+/// 还可能打乱它在菜单栏里的排序。
+@Suite("自愈状态机")
+struct SelfHealingMachineTests {
+
+    private let now = Date()
+    private func machine() -> StatusItemHealth.SelfHealingMachine { .init() }
+
+    /// 连喂 n 次同一个判定，返回每次的动作
+    @discardableResult
+    private func feed(
+        _ machine: inout StatusItemHealth.SelfHealingMachine,
+        _ verdict: StatusItemHealth.Verdict,
+        times: Int,
+        secondsApart: TimeInterval = 0
+    ) -> [StatusItemHealth.SelfHealingMachine.Action] {
+        (0..<times).map { i in
+            machine.advance(verdict: verdict, now: now.addingTimeInterval(Double(i) * secondsApart))
+        }
     }
 
-    private var sampleDump: String {
-        [
-            "Checking data integrity......done.",
-            record(identifier: "io.vpsquota.VPSTrafficQuota", path: "/Applications/VPSQuota.app", seq: "0x35d4"),
-            record(identifier: "io.vpsquota.VPSTrafficQuota", path: "/Users/chenzhenbo/Work/vps-traffic-quota/macos/build/old/VPSQuota.app", seq: "0x2ecc"),
-            record(identifier: "com.unidrop.client", path: "/Volumes/dmg.Qj9lpz/UniDrop.app", seq: "0x3e7c"),
-            record(identifier: "io.vpsquota.VPSTrafficQuota", path: "/Users/chenzhenbo/Work/vps-traffic-quota/macos/build/VPSQuota.app", seq: "0x474c"),
-            separator,
-        ].joined(separator: "\n")
+    /// 推到拉黑终态：确认两次 → 重建一次 → 再确认两次 → 判定拉黑。
+    /// 重建之后要重新确认，是刻意的：宁可晚判，也不能给用户弹一条假横幅。
+    private func blockedMachine() -> StatusItemHealth.SelfHealingMachine {
+        var m = machine()
+        feed(&m, .detached(.notMirrored), times: 4, secondsApart: 20)
+        return m
     }
 
-    @Test("只找本 bundle id 的死记录，别的应用的不碰，序号后缀要剥掉")
-    func findsOnlyOwnBundleStalePaths() {
-        let existing: Set<String> = [
-            "/Applications/VPSQuota.app",
-            "/Users/chenzhenbo/Work/vps-traffic-quota/macos/build/VPSQuota.app",
-        ]
-        let stale = LaunchServicesJanitor.staleLaunchServicesPaths(
-            inDump: sampleDump, bundleID: "io.vpsquota.VPSTrafficQuota"
-        ) { existing.contains($0) }
-        // UniDrop 的死记录不是我们的，不能碰；序号后缀必须被剥掉
-        #expect(stale == ["/Users/chenzhenbo/Work/vps-traffic-quota/macos/build/old/VPSQuota.app"])
+    @Test("notMirrored 确认两次才重建，重建后重新确认，再无镜像即判定拉黑")
+    func mirrorRebuildsOnceThenDeclaresBlocked() {
+        var m = machine()
+        let actions = feed(&m, .detached(.notMirrored), times: 4, secondsApart: 20)
+        #expect(actions[0] == .probe(15))                      // 第一次只是确认
+        #expect(actions[1] == .rebuild(clearAutosave: false))   // 连续第二次才动手
+        #expect(actions[2] == .probe(15))                      // 重建后重新确认
+        #expect(actions[3] == .declareBlocked)                  // 镜像预算用完 → 判定拉黑
+        #expect(m.state == .blockedBySystem)
+        #expect(m.mirrorRebuilds == 1)
     }
 
-    @Test("全部路径都存在时返回空")
-    func returnsEmptyWhenAllPathsExist() {
-        let stale = LaunchServicesJanitor.staleLaunchServicesPaths(
-            inDump: sampleDump, bundleID: "io.vpsquota.VPSTrafficQuota"
-        ) { _ in true }
-        #expect(stale.isEmpty)
+    @Test("进入拉黑终态后永不重建")
+    func neverRebuildsAfterBlocked() {
+        var m = blockedMachine()
+        // 拉黑期间就算被判成别的掉线形态，也一样不重建 —— 图标压根没拿到菜单栏槽位，
+        // 这时的任何 detached 都不该触发动作
+        let later = feed(&m, .detached(.notMirrored), times: 20, secondsApart: 60)
+            + feed(&m, .detached(.offMenuBar), times: 5, secondsApart: 60)
+        #expect(later.allSatisfy { $0 == .probe(60) })
+        #expect(m.mirrorRebuilds == 1)
+        #expect(m.state == .blockedBySystem)
     }
 
-    @Test("路径带空格、结尾没有分隔行也能解析")
-    func handlesPathWithSpacesAndNoTrailingSeparator() {
-        let dump = record(identifier: "com.unidrop.client", path: "/Volumes/UniDrop 1/UniDrop.app", seq: "0x411c")
-        let stale = LaunchServicesJanitor.staleLaunchServicesPaths(
-            inDump: dump, bundleID: "com.unidrop.client"
-        ) { _ in false }
-        #expect(stale == ["/Volumes/UniDrop 1/UniDrop.app"])
+    @Test("用户放行后自动转健康，并把镜像重建预算还回去")
+    func recoversWhenUserAllows() {
+        var m = blockedMachine()
+        #expect(m.advance(verdict: .healthy, now: now) == .recovered)
+        if case .healthy = m.state {} else { Issue.record("应回到 healthy，实际 \(m.state)") }
+        #expect(m.mirrorRebuilds == 0)
+        // 还回预算之后，再被拉黑一次还能重新走一轮"重建 → 判定"
+        #expect(feed(&m, .detached(.notMirrored), times: 2, secondsApart: 20).last
+                == .rebuild(clearAutosave: false))
+    }
+
+    @Test("recovered 与 declareBlocked 都只发一次")
+    func edgeActionsFireOnce() {
+        var m = blockedMachine()
+        #expect(feed(&m, .detached(.notMirrored), times: 3, secondsApart: 60)
+                .allSatisfy { $0 == .probe(60) })          // 不重复 declareBlocked
+
+        #expect(m.advance(verdict: .healthy, now: now) == .recovered)
+        #expect(m.advance(verdict: .healthy, now: now) == .none)   // 不重复 recovered
+    }
+
+    @Test("结构性掉线仍走完整退避梯，最后一次先清 autosave")
+    func structuralDetachStillRebuilds() {
+        var m = machine()
+        func step(_ t: Date) -> StatusItemHealth.SelfHealingMachine.Action {
+            m.advance(verdict: .detached(.offMenuBar), now: t)
+        }
+        func expectProbe(_ action: StatusItemHealth.SelfHealingMachine.Action, _ seconds: TimeInterval) {
+            guard case .probe(let wait) = action else {
+                Issue.record("应是 probe，实际 \(action)"); return
+            }
+            #expect(abs(wait - seconds) < 0.5)
+        }
+
+        // 第一轮：确认两次就重建
+        expectProbe(step(now), 15)
+        #expect(step(now) == .rebuild(clearAutosave: false))
+        #expect(m.attempts == 1)
+
+        // 重建后连续计数清零，要重新确认；30 秒退避窗口没到只能等
+        var t = now.addingTimeInterval(5)
+        expectProbe(step(t), 15)
+        expectProbe(step(t), 25)
+
+        // 退避窗口过了：连续计数还在，下一拍直接重建
+        t = now.addingTimeInterval(400)
+        #expect(step(t) == .rebuild(clearAutosave: false))
+        #expect(m.attempts == 2)
+        expectProbe(step(t), 15)
+        expectProbe(step(t), 60)      // 第二段退避翻倍
+
+        // 预算最后一次：先清掉可能被写坏的持久化位置键再重建
+        t = now.addingTimeInterval(2000)
+        #expect(step(t) == .rebuild(clearAutosave: true))
+        #expect(m.attempts == 3)
+        expectProbe(step(t), 15)
+        #expect(step(t) == .giveUp)
+        #expect(m.state != .blockedBySystem)   // 结构性耗尽不等于被拉黑
+    }
+
+    @Test("indeterminate 不计入连续计数，也不触发重建")
+    func indeterminateNeverCounts() {
+        var m = machine()
+        #expect(feed(&m, .indeterminate, times: 10).allSatisfy { $0 == .probe(15) })
+        #expect(m.state == .unknown)
+        #expect(m.attempts == 0)
+        // 夹在掉线中间的 indeterminate 也不该打断确认计数
+        _ = m.advance(verdict: .detached(.notMirrored), now: now)
+        _ = m.advance(verdict: .indeterminate, now: now)
+        #expect(m.advance(verdict: .detached(.notMirrored), now: now)
+                == .rebuild(clearAutosave: false))
+    }
+
+    @Test("userHidden 只尝试一次拉回可见")
+    func userHiddenForcesVisibleOnce() {
+        var m = machine()
+        #expect(feed(&m, .userHidden, times: 3) == [.forceVisibleOnce, .none, .none])
+    }
+
+    @Test("拉黑期间用户把图标拖走：拉黑判断不再成立，撤掉告知")
+    func userHiddenClearsBlockedState() {
+        var m = blockedMachine()
+        #expect(m.advance(verdict: .userHidden, now: now) == .recovered)
+        #expect(m.state == .unknown)
+    }
+
+    @Test("唤醒只清连续计数，不清重建预算、不解除拉黑")
+    func resetDetachedRunKeepsBudgets() {
+        var m = machine()
+        feed(&m, .detached(.offMenuBar), times: 2)
+        #expect(m.attempts == 1)
+        m.resetDetachedRun()
+        #expect(m.state == .unknown)
+        #expect(m.attempts == 1)          // 预算没被刷掉
+
+        var blocked = blockedMachine()
+        blocked.resetDetachedRun()
+        #expect(blocked.state == .blockedBySystem)   // 拉黑不会因为唤醒而解除
+    }
+
+    @Test("连续健康够久，两份重建预算都还回去")
+    func stableHealthResetsBudgets() {
+        var m = machine()
+        feed(&m, .detached(.offMenuBar), times: 2)
+        #expect(m.attempts == 1)
+
+        _ = m.advance(verdict: .healthy, now: now)
+        _ = m.advance(verdict: .healthy, now: now.addingTimeInterval(599))
+        #expect(m.attempts == 1)
+        _ = m.advance(verdict: .healthy, now: now.addingTimeInterval(601))
+        #expect(m.attempts == 0)
     }
 }
 
-/// 注销死记录时原位重建的 stub Info.plist：必须是可解析的 XML plist，
-/// 且 CFBundleIdentifier 与要注销的记录一致（否则 `-u` 匹配不上）。
-@Suite("stub Info.plist")
-struct StubInfoPlistTests {
-    @Test("是可解析的 plist，且 bundle id 与要注销的记录一致")
-    func stubPlistIsReadablePropertyListWithOwnBundleID() throws {
-        let data = LaunchServicesJanitor.stubInfoPlist(bundleID: "io.vpsquota.VPSTrafficQuota")
-        let dict = try #require(
-            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String])
-        #expect(dict["CFBundleIdentifier"] == "io.vpsquota.VPSTrafficQuota")
-        #expect(dict["CFBundlePackageType"] == "APPL")
-        #expect(dict["CFBundleExecutable"] == "LSTombstone")
+/// 控制中心镜像匹配。
+@Suite("菜单栏镜像匹配")
+struct MenuBarMirrorTests {
+
+    /// 健康状态项窗口的 frame（与健康判定用例同一组实测数据）
+    private let itemFrame = CGRect(x: 2661, y: 1410, width: 80, height: 30)
+
+    private func mirror(x: CGFloat, width: CGFloat, layer: Int = 25, own: Bool = false, height: CGFloat = 24)
+        -> MenuBarMirror.Window {
+        .init(layer: layer, isOwnProcess: own, bounds: CGRect(x: x, y: 0, width: width, height: height))
+    }
+
+    @Test("同 x 同宽的 layer-25 窗口即视为有镜像")
+    func matchesByGeometry() {
+        let windows = [mirror(x: 100, width: 40), mirror(x: 2661, width: 80)]
+        #expect(MenuBarMirror.isMirrored(windows: windows, itemFrame: itemFrame, frameIsTrustworthy: true) == true)
+    }
+
+    @Test("没有任何窗口对得上 → 没有镜像")
+    func reportsMissingMirror() {
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 100, width: 40)], itemFrame: itemFrame, frameIsTrustworthy: true) == false)
+        #expect(MenuBarMirror.isMirrored(
+            windows: [], itemFrame: itemFrame, frameIsTrustworthy: true) == false)
+    }
+
+    @Test("frame 不新鲜时信号作废，绝不判成没有镜像")
+    func ignoresSignalWhenFrameStale() {
+        // 这是最关键的一条：拿过期坐标比几何必然对不上，
+        // 若返回 false 就会把健康的状态项误判成被拉黑，给用户弹一条假横幅。
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2661, width: 80)], itemFrame: itemFrame, frameIsTrustworthy: false) == nil)
+        #expect(MenuBarMirror.isMirrored(
+            windows: [], itemFrame: itemFrame, frameIsTrustworthy: false) == nil)
+        #expect(MenuBarMirror.isMirrored(
+            windows: [], itemFrame: nil, frameIsTrustworthy: true) == nil)
+        #expect(MenuBarMirror.isMirrored(
+            windows: [], itemFrame: .zero, frameIsTrustworthy: true) == nil)
+    }
+
+    @Test("别的层、自己的窗口、过高的窗口都不算镜像")
+    func rejectsIrrelevantWindows() {
+        // layer 0 的普通窗口恰好同 x 同宽
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2661, width: 80, layer: 0)],
+            itemFrame: itemFrame, frameIsTrustworthy: true) == false)
+        // 自己进程的状态项窗口本身也在 layer 25 上，不能拿它当镜像
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2661, width: 80, own: true)],
+            itemFrame: itemFrame, frameIsTrustworthy: true) == false)
+        // 控制中心自己的下拉面板：同 x 同宽但很高
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2661, width: 80, height: 400)],
+            itemFrame: itemFrame, frameIsTrustworthy: true) == false)
+    }
+
+    @Test("容差 2 点以内算命中，超出不算")
+    func respectsEdgeTolerance() {
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2663, width: 78)], itemFrame: itemFrame, frameIsTrustworthy: true) == true)
+        #expect(MenuBarMirror.isMirrored(
+            windows: [mirror(x: 2664, width: 80)], itemFrame: itemFrame, frameIsTrustworthy: true) == false)
     }
 }

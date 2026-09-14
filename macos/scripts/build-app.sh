@@ -10,10 +10,13 @@
 # 之所以不用 Xcode 工程：SwiftPM 的包描述是纯文本、可 diff、可在命令行完整验证，
 # 而菜单栏应用需要的只是一个正确的 bundle 结构和 Info.plist —— 手工组装完全够用。
 #
-# macOS 26 的 ControlCenter 按 bundle id 查 LaunchServices：撞上一条路径已不存在的
-# 陈旧注册记录（死记录）就会把状态项拉黑隐藏（见 docs/TROUBLESHOOTING_菜单栏图标不显示.md）。
-# 删任何被注册过的 .app（构建产物、安装版）之前都必须先 lsregister -u 注销，
+# 删任何被注册过的 .app（构建产物、安装版）之前先 lsregister -u 注销，保持 LaunchServices
+# 数据库整洁（否则 `open -a VPSQuota` 可能解析到已删路径，Spotlight 里也会留幽灵条目），
 # 所以删除构建产物一律走 --clean，别直接 rm。
+#
+# 运行调试版一律 `open build/VPSQuota.app`。**不要在 VS Code 等 IDE 的集成终端里直接跑
+# swift run 或 .build/debug/VPSQuota** —— 那样进程的"负责进程"是 IDE，菜单栏项会被
+# ControlCenter 归到 IDE 名下，随它一起被拉黑（见 docs/TROUBLESHOOTING_菜单栏图标不显示.md）。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -67,7 +70,7 @@ swift "$ROOT/scripts/make-icon.swift" "$ROOT/build"
 iconutil -c icns "$ROOT/build/VPSQuota.iconset" -o "$ROOT/build/VPSQuota.icns"
 
 echo "==> 组装 $APP_DIR"
-# 先注销再删：万一本次构建中途失败收场，也不会留下指向本路径的 LaunchServices 死记录
+# 先注销再删：万一本次构建中途失败收场，也不会在 LaunchServices 里留下指向本路径的注册
 unregister_ls "$APP_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -267,9 +270,9 @@ fi
 # ── 安装（仅 --install）────────────────────────
 # 替换 /Applications 里的安装版。三个纪律：
 # 1. 先退出正在运行的实例（文件被换掉时旧进程仍占着旧 inode，行为不可预期）；
-# 2. 先 lsregister -u 再删旧安装版，不留死记录；
+# 2. 先 lsregister -u 再删旧安装版，不留指向已删路径的注册；
 # 3. 必须用 ditto 而不是 cp -R —— cp -R 在目标 .app 已存在时会嵌套成
-#    /Applications/VPSQuota.app/VPSQuota.app（且同样制造死记录）。
+#    /Applications/VPSQuota.app/VPSQuota.app。
 if [ "$INSTALL" -eq 1 ]; then
     echo "==> 安装到 /Applications"
     INSTALLED="/Applications/$APP_NAME.app"
@@ -289,6 +292,7 @@ fi
 echo ""
 echo "✅ 已生成：$APP_DIR"
 echo ""
-echo "安装到应用：./scripts/build-app.sh --install   （别用 cp -R，会嵌套且制造死记录）"
+echo "安装到应用：./scripts/build-app.sh --install   （别用 cp -R，目标已存在时会嵌套）"
 echo "删除构建产物：./scripts/build-app.sh --clean    （先注销 LaunchServices 再删）"
+echo "运行调试版：  open build/VPSQuota.app            （别在 IDE 集成终端里直接跑可执行文件）"
 echo "开机自启：  应用内「设置 → 启动 → 登录时启动」"

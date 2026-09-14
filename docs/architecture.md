@@ -190,12 +190,20 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 「呈现方式」偏好存在 UserDefaults 而不是 `config.json` —— 它是 macOS 专属的界面设置，
 不该混进两端共用、可互相拷贝的那份配置。
 
-**macOS 26 还会按 bundle id 拉黑状态项**（触发器是 LaunchServices 死记录，拉黑是跨进程
-重启的粘性会话态）：应用侧对象、frame、可点击性全部正常，用户就是看不见图标。对策分三层：
-`StatusItemHealth` 用「控制中心有没有为它渲染镜像」做健康判定（几何判定会被骗过），
-`LaunchServicesJanitor` 在启动与每次重建前清死记录（唯一可行方式是原位重建 stub 再
-`lsregister -u`），`build-app.sh` 在删任何被注册过的 .app 之前先注销（`--clean` / `--install`）。
-已经存在的拉黑无法在应用内解除，需要注销重登/重启一次。机制详录见
+**macOS 26 还会拉黑状态项。** ControlCenter 在自己的 `trackedApplications` 表里按
+**负责进程**归属菜单项，本 bundle id 只要出现在任意一条 `isAllowed=false` 记录的
+`menuItemLocations` 里就被隐藏 —— 应用侧对象、frame、可点击性全部正常，用户就是看不见图标。
+最常见的中招方式是从 IDE 的集成终端直接跑可执行文件：那样负责进程是 IDE，菜单栏项被归到
+IDE 名下，随它一起被拉黑。对策分两层：
+
+- **判定**：`MenuBarMirror` 看「控制中心有没有为它渲染菜单栏镜像」（纯几何判定会被骗过），
+  `StatusItemHealth` 把它与几何、可见性一起折成一个 verdict，`SelfHealingMachine` 负责编排。
+- **处置**：重建治不好拉黑（每个新 PID 照样秒拒），所以 `notMirrored` 只重建一次，
+  再无镜像就进 `blockedBySystem` 终态 —— 停止重建、只留心跳，并在主窗口与设置界面挂一条
+  横幅把用户引到「系统设置 › 控制中心 › 菜单栏 › 应用程序」。放行是秒生效的，
+  复查到镜像回来就自动转健康、横幅自动消失。
+
+机制详录与手动排查手册见
 [`TROUBLESHOOTING_菜单栏图标不显示.md`](TROUBLESHOOTING_菜单栏图标不显示.md)。
 
 **开机自启同样不进 `config.json`**，而且连本地偏好都不存：它是「这台机器上的这次安装」

@@ -77,6 +77,10 @@ final class AppModel {
     /// 登记失败的原因。非 nil 时设置界面会把它连同「打开登录项设置」一起显示出来。
     private(set) var launchAtLoginError: String?
 
+    /// 菜单栏状态项被 ControlCenter 拉黑隐藏（见 `StatusItemController` 的健康自愈）。
+    /// 图标本身看不见，提示只能出现在菜单栏之外 —— 主窗口与设置界面各挂一条横幅。
+    private(set) var menuBarBlockedBySystem = false
+
     /// 防止 `applyLaunchAtLogin` 的回滚赋值又触发一轮 didSet。
     private var isApplyingLaunchAtLogin = false
 
@@ -197,6 +201,15 @@ final class AppModel {
 
     func openLoginItemsSettings() {
         LaunchAtLogin.openSystemSettings()
+    }
+
+    func setMenuBarBlockedBySystem(_ blocked: Bool) {
+        guard menuBarBlockedBySystem != blocked else { return }
+        menuBarBlockedBySystem = blocked
+    }
+
+    func openMenuBarSettings() {
+        MenuBarSettingsLink.open()
     }
 
     /// 启动流程：先用本地数据把界面填满，再在后台发起真正的采集。

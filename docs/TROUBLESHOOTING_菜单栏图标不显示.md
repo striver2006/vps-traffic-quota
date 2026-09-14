@@ -1,27 +1,27 @@
 # 菜单栏图标不显示：排查与解决
 
 > 症状：应用在运行、进程健康、流量刷新正常，但菜单栏上**看不到图标**。
-> 一句话结论：macOS 26 的 ControlCenter 把 `io.vpsquota.VPSTrafficQuota` 这个
-> bundle id 的状态项拉黑了（日志特征 `Moving host to blocked list`）；触发器是
-> LaunchServices 死记录，而拉黑本身是**按 bundle id 的粘性会话态**——清掉死记录
-> 只是必要卫生，不足以解除已经存在的拉黑。
+> 一句话结论：macOS 26 的 ControlCenter 把 `io.vpsquota.VPSTrafficQuota` 的菜单栏项
+> 拉黑了（日志特征 `Moving host to blocked list`）。拉黑不是按"这个应用自己的开关"
+> 判的，而是按**负责进程**归属 —— 只要本 bundle id 出现在任意一条 `isAllowed=false`
+> 记录的 `menuItemLocations` 里就被隐藏。
 >
-> 机制结论与受控实验来自 TokenBar 项目（2026-09-13/14，同机验证），
-> 详见其 `doc/TROUBLESHOOTING_菜单栏图标不显示.md`；本文是本项目的操作手册。
-> 本项目于 2026-09-14 中招（14:49 起被拉黑），并移植了其全套自愈机制。
+> **解除办法：到「系统设置 › 控制中心 › 菜单栏 › 应用程序」把那一行开关打开。**
+> 秒生效，正在跑的进程不用重启。
 
 ## 一、症状与快速定性
 
 | 观察 | 表现 |
 | :--- | :--- |
-| 应用侧日志 | `状态项[launch+2s] verdict=detached(notMirrored) … mirror=false`（error 级，重建后依旧） |
+| 应用侧日志 | `状态项[…] verdict=detached(notMirrored) … mirror=false`（error 级），重建后依旧 |
 | 几何 | frame 可以完全正常，**纯几何判定会误判健康** |
 | ControlCenter 日志 | `Moving host to blocked list; (bid:io.vpsquota.VPSTrafficQuota-VPSQuota-<pid>)`，出现在 host 创建后 ~20ms |
-| 重启应用 / 重建状态项 | 无效——每个新 PID 照样秒拒 |
+| 重启应用 / 重建状态项 | 无效 —— 每个新 PID 照样秒拒 |
+| 应用界面 | 主窗口与设置界面顶部出现「菜单栏图标被系统隐藏」横幅 |
 
 **最可靠的健康信号是"控制中心有没有为它渲染镜像"**（layer-25、onscreen、同 x 同宽的
-ControlCenter 窗口），应用内已实现（`StatusItemController.menuBarHostMirrors`）；
-`mirror=false` 基本等价于被拉黑。
+ControlCenter 窗口），应用内已实现（`MenuBarMirror.isMirrored`）；`mirror=false` 基本
+等价于被拉黑。
 
 快速定性两条命令：
 
@@ -36,129 +36,173 @@ command log stream --predicate 'subsystem == "io.vpsquota.VPSTrafficQuota"' --le
 
 > 注意两处 macOS/zsh 坑：调系统日志必须写 `command log`（zsh 的 `log` 是内建命令，
 > 直接写会报 `too many arguments`）；健康判定日志是 `.info` 级，事后 `log show` 查不到。
+> 解除瞬间的 `Unblocking host` 同样只在 stream 里看得到。
 
-## 二、根因模型（两层）
+## 二、真因：ControlCenter 的 trackedApplications 表
 
-1. **触发层（LaunchServices）**：ControlCenter 创建状态项 host 时按 bundle id 查
-   LaunchServices。撞上一条**路径已不存在的陈旧注册记录**（死记录）就会触发拉黑。
-   本项目的典型来源：`build/VPSQuota.app` 被注册后整目录删除/重建（旧版
-   `build-app.sh` 直接 `rm -rf`）、用 `cp -R` 反复安装、删掉安装版。
-2. **粘性层（会话态）**：死记录清零后**拉黑仍不解除**。同机受控实验（TokenBar，
-   2026-09-14）证明：拉黑按 bundle id 精确命中，与应用代码、路径、签名、
-   autosaveName 无关；重启 ControlCenter、`tccutil reset`、`lsregister -f`
-   重注册全部无效；ControlCenter 的全部落盘状态查无该 bundle id 痕迹。
-   结论：拉黑状态活在重启 ControlCenter 不清的会话层（疑似 WindowServer），
-   **注销重登 / 重启是目前唯一有希望的解除手段**（待真机闭环验证）。
+落盘位置（2026-09-14 sudo 拷出解码确认）：
 
-## 三、别再踩（实测结论，同机验证）
+```
+~/Library/Group Containers/group.com.apple.controlcenter/Library/Preferences/group.com.apple.controlcenter.plist
+```
 
-1. `lsregister -u <path>` **只认路径上真实存在的合法 bundle**。路径已删除时直接失败
-   ——对死记录直接 `-u` 永远无效。
-2. 清除死记录的**唯一可行方式：原位重建一个最小 stub .app → `-u` → 删掉 stub**。
-   应用内实现为 `LaunchServicesJanitor.unregisterRecord`（stub 的 Info.plist 由
-   `stubInfoPlist` 生成，CFBundleIdentifier 必须与死记录一致，否则 `-u` 匹配不上）。
-3. `lsregister -gc` 清不掉死记录；同 bundle id 在新路径重新注册（`-f`）也挤不掉它。
-4. `NSWorkspace.urlsForApplications(withBundleIdentifier:)` 永远找不到死记录
-   （它会过滤掉不存在路径），只能解析 `lsregister -dump` 全量输出。
-5. 健康/掉线日志行是 `.info` 级（仅驻内存），验证必须先起 `log stream` 现场盯着。
-6. `cp -R src /Applications/` 在目标 .app 已存在时会嵌套成
-   `/Applications/VPSQuota.app/VPSQuota.app`；装包必须先 `rm -rf` 目标再用 `ditto`。
+该目录受 TCC 保护，普通 shell 连 `ls` 都是 `Operation not permitted`，要 `sudo cp` 出来再解。
+（同目录的 `group.com.apple.secure-control-center-preferences/…av.plist` 是音视频权限的，不相干。）
 
-## 四、应用内自愈机制（代码指引）
+顶层键 `showSpotlight` / `showWeather` / `trackedApplications`，最后一个是一段嵌套 bplist，
+内容是 `[TrackedApplicationLocation: TrackedApplication]` 字典（数组形式 key、value 交替），
+本机共 64 条。每条：
 
-判定纯函数在 `macos/Sources/VPSQuotaCore/MenuBar/StatusItemHealth.swift`（有单测），
-LS 清理在 `LaunchServicesJanitor.swift`，编排与采样在
-`macos/Sources/VPSQuota/UI/StatusItemController.swift` 文末「状态项健康自愈」一节：
+```
+TrackedApplication { location, menuItemLocations: [Location], isAllowed }
+Location = bundle(<bundle id>) | adhocBinary(<file URL>)
+```
 
-- **清理时机**：启动时一次（`startSelfHealing`）+ 每次状态项重建前
-  （`rebuildStatusItem`，清理完才重建——拉黑不解除时重建多少次都一样，顺序不能反）。
-- **清理范围**：只清**本 bundle id** 且路径已不存在的注册；dump 带 15s 看门狗。
-- **失败可见化**：dump 失败 → error 级 `LaunchServices 死记录清理[reason]：dump 执行失败`；
-  无死记录 → notice 级 `LaunchServices 注册核对[reason]：无死记录`；
-  发现 N 条 → error 级 `发现 N 条，注销 M 条`（M < N 即有失败，含不可写路径清单）。
+实测样本（与本项目相关的几条）：
+
+| 记录（location） | isAllowed | menuItemLocations |
+| :--- | :--- | :--- |
+| `bundle:com.microsoft.VSCode` | **false** | com.unidrop.client, com.tokenbar.mac, **io.vpsquota.VPSTrafficQuota**, com.unidrop.traytest |
+| `bundle:dev.zcode.app` | false | com.tokenbar.mac |
+| `bundle:com.tokenbar.mac` | true | com.tokenbar.mac（自己那条是放行的，照样被拉黑） |
+| `adhoc:…/.build/…/debug/TokenBar` | true | 自身（裸可执行文件独立成记录，所以能上屏） |
+
+**判定规则**（与 ControlCenter 反汇编里"遍历集合 → 比较 → 命中即处理"的循环吻合）：
+
+> 新 host 的 bundle id 只要出现在**任意一条** `isAllowed=false` 记录的 `menuItemLocations`
+> 里，就被拉黑，**与它自己那条记录的开关无关**。
+
+「系统设置 › 菜单栏 › 应用程序」列表里每一行就是一条记录。
+
+## 三、怎么挂到 IDE 名下的
+
+从 IDE 的集成终端直接执行可执行文件时（`swift run`、`./.build/debug/VPSQuota`、
+`build/VPSQuota.app/Contents/MacOS/VPSQuota`），进程的**负责进程（responsible process）**
+是 IDE，ControlCenter 按负责进程归属菜单项 —— 于是本应用的菜单栏项被记进了 IDE 那条记录的
+`menuItemLocations`，IDE 那行开关一关，本应用跟着遭殃。
+
+用 `open` 启动的 .app 由 launchd 负责，不会被归到 IDE 下。
+
+**已经挂错的归属不会自动清理。**
+
+## 四、解除与预防
+
+### 4.1 解除（实测有效）
+
+系统设置 › 控制中心 › 菜单栏 › 应用程序，把**负责它的那一行**开关打开：
+
+- 开发场景：打开 Visual Studio Code / ZCode 等 IDE 那一行；
+- 用户场景：打开「VPS 流量」自己那一行。
+
+2026-09-14 17:4x 实测：开关打开的瞬间 ControlCenter 日志出现
+`Unblocking host; (bid:…)`，**正在运行的进程无需重启即恢复**；之后新启动的进程只出现
+`Starting to track host`，layer-25 上出现状态项镜像，图标回来。
+副作用只是允许这些 IDE "名下"的菜单项显示，IDE 自身并没有状态项。
+
+> 只想让本应用那行开关起作用而不动 IDE 的开关：`sudo` 拷出上述 plist，用 plistlib 从
+> VS Code / ZCode 记录的 `menuItemLocations` 里删掉 `io.vpsquota.VPSTrafficQuota`，
+> 写回原路径（保持 600 权限）后 `killall ControlCenter`。属于改系统偏好文件，优先走上一步。
+
+### 4.2 已实测无效的手段
+
+| 手段 | 结果 |
+| :--- | :--- |
+| 清 LaunchServices 死记录（`lsregister -u` / stub 注销法 / `-gc`） | ❌ 无效 —— 与拉黑无因果关系 |
+| `killall ControlCenter`（自动重生） | ❌ 无效 |
+| `tccutil reset All io.vpsquota.VPSTrafficQuota` | ❌ 无效 |
+| 整机重启 / 注销重登 | ❌ 无效 |
+| 把应用自己那行开关关掉再打开 | ❌ 无效（只写 `Preferences: changed`，不改 IDE 记录） |
+| **打开负责它那一行的开关** | ✅ 秒生效，进程无需重启 |
+
+> 历史留档：本文 2026-09-14 早先的版本把根因写成"LaunchServices 死记录触发 + 会话态粘性"，
+> 当天晚些时候的受控实验（解码 `trackedApplications`）证伪了这两条。相关的应用内清理代码
+> （`LaunchServicesJanitor`）已删除。
+
+### 4.3 预防
+
+**开发时不要在 IDE 集成终端里直接执行可执行文件**，构建后一律：
+
+```bash
+./scripts/build-app.sh && open build/VPSQuota.app
+# 或
+open -a VPSQuota
+```
+
+`build-app.sh` 保留的 `lsregister -u`（`--clean` / `--install` 前先注销）与 `ditto` 装包
+属于**常规卫生**（避免 `open -a` 解析到已删路径、避免 `cp -R` 嵌套成
+`VPSQuota.app/VPSQuota.app`），**与拉黑无关**，别再把它当防线。
+
+## 五、分场景处置
+
+应用无法可靠区分自己属于哪种场景，所以横幅文案把两条都写了。
+
+**开发者场景**：负责进程 = IDE。表现是"我什么都没改，图标就没了"。
+处置：打开 IDE 那一行；预防：见 4.3。
+
+**用户场景**：终端用户走 `open` / launchd / 登录项，**不会**被归到 IDE 下，不会撞上这条。
+但同样会落到 `blockedBySystem` —— 他自己在「系统设置 › 控制中心 › 菜单栏 › 应用程序」里
+把「VPS 流量」那一行关掉了（或误关）。处置：打开自己那一行。
+
+## 六、应用内自愈机制（代码指引）
+
+- 判定：`macos/Sources/VPSQuotaCore/MenuBar/MenuBarMirror.swift`（镜像匹配）
+  + `StatusItemHealth.swift`（verdict 与退避策略、`SelfHealingMachine` 编排），均有单测。
+- 采样与接线：`macos/Sources/VPSQuota/UI/StatusItemController.swift` 文末「状态项健康自愈」一节。
+- 告知 UI：`macos/Sources/VPSQuota/UI/MenuBarBlockedBanner.swift`，挂在主窗口与设置界面。
+
+要点：
+
 - **健康判据优先级**（`StatusItemHealth.evaluate`，顺序不可调）：
   `isVisible`（用户意图）→ 存在性/几何 → **镜像信号**（`mirror=false` → `notMirrored`）
   → 窗口服务器注册。信号查不到（nil）时忽略该信号，绝不因查不到判掉线。
-- **重建退避**（`RebuildPolicy`）：连续 2 次确认才动手，30/60/120… 秒指数退避，
-  单次运行最多 5 次（最后一次先清 autosave 持久化键），连续健康 10 分钟预算清零。
-- **探测节奏**：启动校验梯 `launch+2s/5s/15s/60s`，5 分钟心跳，显示器重配置/唤醒后复查；
+- **镜像匹配只用几何**，刻意不读 `kCGWindowName`（那要屏幕录制权限，一个流量工具不该要）。
+  代价是 frame 过期会误判，所以 frame 不新鲜时（`statusItemFrameIsTrustworthy`：屏幕刚重配置 /
+  `resolveItemRect` 近期判过过期 / frame 落在所有屏幕之外）镜像信号直接作废返回 nil。
+- **处置分两类**（`SelfHealingMachine.advance`）：
+  - `notMirrored`：确认 2 次 → 重建 1 次 → 重新确认 2 次仍无镜像 → `blockedBySystem` 终态，
+    **停止重建**、error 日志 + 横幅，只留 60 秒复查。用户放行后自动转 healthy、横幅消失。
+  - 结构性掉线（对象没了、几何跑飞）：重建仍是唯一手段，走原来的退避梯
+    （连续 2 次确认、30/60 秒指数退避、预算 3 次、最后一次先清 autosave 持久化键），
+    耗尽后 `giveUp`（停重建、心跳继续），不等于被拉黑。
+- **探测节奏**：启动校验梯 `launch+2s/5s/15s/60s`，5 分钟心跳，显示器重配置/唤醒后复查，
+  系统设置被激活后 2 秒复查（用户多半正从那儿放行回来）；
   面板开着或鼠标按着时跳过（几何不作数）。
+- 没有 Dock 图标时，进入拉黑终态会把主窗口顶出来一次 —— 否则用户没有任何能看到横幅的入口。
 
-## 五、构建与清理纪律（防再触发）
+## 七、手动排查手册
 
-```bash
-# 日常构建（脚本会在删旧产物前自动 lsregister -u）
-./scripts/build-app.sh
-
-# 构建并替换 /Applications 安装版（先注销旧安装版再删，用 ditto 拷贝，装完即启动）
-./scripts/build-app.sh --install
-
-# 删除构建产物——一律走 --clean（先注销构建产物路径再删），别直接 rm
-./scripts/build-app.sh --clean
-```
-
-`build/VPSQuota.app` 会被 LaunchServices 注册着；直接 `rm` 它就是给
-`io.vpsquota.VPSTrafficQuota` 制造新的死记录——下次 ControlCenter 重新评估时
-可能再次触发拉黑。卸载安装版同理：先
-`lsregister -u /Applications/VPSQuota.app` 再删。
-
-## 六、手动排查与清除手册
-
-### 6.1 盘点死记录（先看再动手）
+### 7.1 解码 trackedApplications，确认是谁把我们拉黑了
 
 ```bash
-LSR=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+CC="$HOME/Library/Group Containers/group.com.apple.controlcenter/Library/Preferences/group.com.apple.controlcenter.plist"
+sudo cp "$CC" /tmp/cc.plist && sudo chown "$(id -un)" /tmp/cc.plist
 
-# 本 bundle id 名下所有注册：死链 / 存活
-$LSR -dump | awk '/^----/{buf=""} {buf=buf $0 "\n"} /identifier: +io\.vpsquota\.VPSTrafficQuota/{print buf}' \
-  | grep -E '^path:' | sed -E 's/^[[:space:]]*path:[[:space:]]+//; s/ \(0x[0-9a-f]+\)$//' | sort -u \
-  | while read -r p; do [ -e "$p" ] && echo "[存在]  $p" || echo "[死链]  $p"; done
+python3 - <<'PY'
+import plistlib
+d = plistlib.load(open('/tmp/cc.plist','rb'))
+inner = plistlib.loads(d['trackedApplications'])   # 内层还是 bplist
+print(inner)   # [location, app, location, app, …] 交替；找 isAllowed=False 且
+               # menuItemLocations 里含 io.vpsquota.VPSTrafficQuota 的那条
+PY
 ```
 
-> macOS 自带 BSD sed 不认 `\s`，要写 `[[:space:]]`；否则静默不生效。
-
-### 6.2 清除死记录
-
-- **路径还在的记录**：`$LSR -u <path>` 直接有效。
-- **路径已删除的记录**：`-u` 无效，需原位重建最小 stub（应用内已自动化；手动可参照
-  `unregisterRecord`：建 `Contents/Info.plist`（CFBundleIdentifier 填
-  `io.vpsquota.VPSTrafficQuota`）+ 空 `Contents/MacOS/<可执行名>`，`-u` 后删掉 stub）。
-- **`/Volumes/...` 卷路径死记录**：stub 法也够不着（不可写），只能重新挂载对应卷后
-  `-u`，或走 6.3 的重手段。
-
-### 6.3 解除已存在的拉黑（按验证程度排序）
-
-| 手段 | 同机实测结果（2026-09-14，TokenBar） |
-| :--- | :--- |
-| 清 LS 死记录 + 重启应用 | 无效（拉黑是粘性态） |
-| 重启 ControlCenter（`killall ControlCenter`，自动重生） | 无效 |
-| `tccutil reset All io.vpsquota.VPSTrafficQuota` | 无效 |
-| **注销重登 / 重启** | **当前最优假设，待闭环验证**（会话层状态随会话清除） |
-| `lsregister -kill -seed -r` 全库重建 | 重手段（影响全局默认应用关联），仅上述全部无效时考虑 |
-
-> 判断拉黑是否已解除：跑第一节的两条命令——ControlCenter 日志不再出现
-> `Moving host to blocked list`，且应用侧 `mirror=true`、`verdict=healthy`。
-
-### 6.4 验证流程（装包后必做）
+### 7.2 验证流程（装包后必做）
 
 ```bash
 # 1. 先起日志流（.info 级不落盘，必须现场盯）
 command log stream --predicate 'subsystem == "io.vpsquota.VPSTrafficQuota"' --level debug --style compact
 
-# 2. 另开终端：构建 + 安装（一步完成，自带 LS 注销卫生）
+# 2. 另开终端：构建 + 安装 + 启动
 ./scripts/build-app.sh --install
 ```
 
-预期日志（健康）：
+预期（健康）：`状态项[launch+2s] verdict=healthy … mirror=true frameOK=true state=healthy`。
 
-- `LaunchServices 注册核对[launch]：无死记录`
-- `状态项[launch+2s] verdict=healthy … mirror=true`
-
-若出现 `LaunchServices 死记录清理[launch]：发现 N 条，注销 N 条`，说明自愈生效。
-若持续 `verdict=detached(notMirrored) … mirror=false` 且 ControlCenter 仍在拉黑，
-回到 6.3——大概率需要注销重登/重启一次以清除会话层拉黑；重启后自愈机制会保证
-死记录不再积累，问题不再复发。
+若持续 `verdict=detached(notMirrored) … mirror=false` 并最终出现
+`状态项被 ControlCenter 拉黑隐藏`，回到第四节 —— 打开负责它那一行的开关即可，
+**不需要重启应用，更不需要重启系统**。
 
 ---
-*2026-09-14 · 移植自 TokenBar 的排查结论与自愈实现；如结论被后续验证修正，
-先更新本文与 `docs/architecture.md` 对应段落。*
+*2026-09-14 修订：根因由受控实验（解码 `trackedApplications`）确定，
+推翻了同日早先"LaunchServices 死记录 + 会话态粘性"的结论。
+如结论再被后续验证修正，先更新本文与 `docs/architecture.md` 对应段落。*
