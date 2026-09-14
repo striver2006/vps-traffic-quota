@@ -14,7 +14,7 @@
 | 观察 | 表现 |
 | :--- | :--- |
 | 应用侧日志 | `状态项[…] verdict=detached(notMirrored) … mirror=false`（error 级），重建后依旧 |
-| ControlCenter 日志 | 运行中被拉黑：`Moving host to blocked list`（host 创建后 ~20ms）；启动时就已被拉黑：`Starting to track blocked host` |
+| ControlCenter 日志 | 运行中被拉黑：`Moving host to blocked list` → `Stopping tracking for host` → `Starting to track blocked host` 三连；启动时就已被拉黑：只有最后一条 |
 | 重启应用 / 重建状态项 | 无效 —— 每个新 PID 照样秒拒 |
 | 应用界面 | 主窗口与设置界面顶部出现「菜单栏图标被系统隐藏」横幅 |
 
@@ -153,6 +153,11 @@ open -a VPSQuota
 **用户场景**：终端用户走 `open` / launchd / 登录项，**不会**被归到 IDE 下，不会撞上这条。
 但同样会落到 `blockedBySystem` —— 他自己在「系统设置 › 控制中心 › 菜单栏 › 应用程序」里
 把「VPS 流量」那一行关掉了（或误关）。处置：打开自己那一行。
+
+2026-09-14 实测确认：在系统设置里关掉自己那一行走的是 **`notMirrored`**，
+判定日志里 `visible=true` —— 那个开关**不会**改 `NSStatusItem.isVisible`，
+所以不会撞上 `userHidden` 分支（那条是用户 Cmd 拖走图标才会走的）。
+两种场景的表现完全一致：14 秒判定、只重建 1 次、frame 同样变成 `0,-22`。
 
 ## 六、应用内自愈机制（代码指引）
 
