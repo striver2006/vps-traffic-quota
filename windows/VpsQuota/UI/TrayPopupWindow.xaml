@@ -21,8 +21,12 @@
             <DockPanel Margin="0,0,0,9">
                 <TextBlock x:Name="StatusText" DockPanel.Dock="Right" FontSize="12"
                            Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="VPS 流量" FontSize="14" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="VPS 流量" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                    <TextBlock x:Name="VersionText" FontSize="11"
+                               Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="6,0,0,1"/>
+                </StackPanel>
             </DockPanel>
 
             <Border Height="1" Background="#EEF2F7" Margin="0,0,0,4"/>

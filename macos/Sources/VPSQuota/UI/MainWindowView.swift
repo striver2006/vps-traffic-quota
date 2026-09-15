@@ -81,6 +81,8 @@ struct MainWindowView: View {
                     Text("尚未刷新")
                 }
                 Spacer()
+                Text("v\(AppInfo.version)")
+                    .foregroundStyle(.tertiary)
             }
             .font(.system(size: 11))
             .foregroundStyle(.secondary)

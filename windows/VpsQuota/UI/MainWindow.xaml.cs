@@ -13,6 +13,7 @@ public partial class MainWindow : Window
     public MainWindow(AppState state)
     {
         InitializeComponent();
+        VersionBadge.Text = $"v{AppInfo.Version}";
         _state = state;
         _state.StatusesChanged += OnStatusesChanged;
         Render();

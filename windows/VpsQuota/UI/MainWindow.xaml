@@ -33,8 +33,14 @@
                     <Image Source="pack://application:,,,/Assets/app-icon.png" Width="38" Height="38"
                            VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
                     <StackPanel VerticalAlignment="Center" Margin="12,0,0,0">
-                        <TextBlock Text="VPS 流量监控" FontSize="19" FontWeight="Bold"
-                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="VPS 流量监控" FontSize="19" FontWeight="Bold"
+                                       Foreground="{StaticResource TextPrimaryBrush}"/>
+                            <Border Background="#EEF2F7" CornerRadius="4" Padding="6,2" Margin="9,0,0,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="VersionBadge" FontSize="11"
+                                           Foreground="{StaticResource TextSecondaryBrush}" FontWeight="Medium"/>
+                            </Border>
+                        </StackPanel>
                         <TextBlock Text="集中查看 DMIT 与 Vultr 的月度配额、剩余空间和月末外推"
                                    FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"
                                    Margin="0,2,0,0"/>

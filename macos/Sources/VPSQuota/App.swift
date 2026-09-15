@@ -69,8 +69,16 @@ struct VPSQuotaApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}   // 主窗口是单例，不提供"新建"
 
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 VPS 流量") {
+                    NSApp.orderFrontStandardAboutPanel(options: [
+                        .applicationVersion: AppInfo.version
+                    ])
+                }
+            }
+
             // 默认的「帮助」菜单指向一本并不存在的帮助书，点了只会弹
-            // “Help isn't available for …”。换成两个真正有用的入口。
+            // “Help isn't available for …”。换成真正有用的入口。
             CommandGroup(replacing: .help) {
                 Button("使用说明") {
                     // 打包时若有 pandoc 就渲染成 HTML（表格和代码块才能正常呈现），
@@ -80,6 +88,9 @@ struct VPSQuotaApp: App {
                         ?? bundle.url(forResource: "README", withExtension: "md") {
                         NSWorkspace.shared.open(url)
                     }
+                }
+                Button("检查最新版本…") {
+                    NSWorkspace.shared.open(AppInfo.releasesURL)
                 }
                 Button("打开配置文件夹") {
                     NSWorkspace.shared.open(AppPaths.directory)

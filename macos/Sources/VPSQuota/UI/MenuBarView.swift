@@ -41,10 +41,13 @@ struct MenuBarView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 6) {
             Text("VPS 流量")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
+            Text("v\(AppInfo.version)")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
             Spacer()
             if model.isRefreshing {
                 ProgressView()
@@ -101,6 +104,11 @@ struct MenuBarView: View {
                 dismiss()
                 openWindow(id: WindowID.settings)
                 NSApp.activate(ignoringOtherApps: true)
+            }
+
+            menuButton("检查最新版本…", systemImage: "arrow.up.right.square") {
+                dismiss()
+                NSWorkspace.shared.open(AppInfo.releasesURL)
             }
 
             menuButton("退出", systemImage: "power") {

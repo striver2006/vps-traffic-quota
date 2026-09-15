@@ -24,6 +24,7 @@ public partial class TrayPopupWindow : Window
     public TrayPopupWindow(AppState state)
     {
         InitializeComponent();
+        VersionText.Text = $"v{AppInfo.Version}";
         _state = state;
         _state.StatusesChanged += OnStatusesChanged;
         Render();

@@ -1,11 +1,13 @@
 namespace VpsQuota;
 
+using System.Diagnostics;
 using System.Drawing;
 // Mutex / CancellationToken 在 System.Threading 里。必须显式 using：
 // XamlPreCompile 生成的 wpftmp 项目不继承 ImplicitUsings，见 csproj 里的说明。
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
+using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.UI;
 using Forms = System.Windows.Forms;
@@ -154,6 +156,14 @@ public partial class App : Application
             if (_state is not null) await _state.RefreshAsync();
         });
         menu.Items.Add("设置…", null, (_, _) => { HidePopup(); _state?.ShowSettings(); });
+        menu.Items.Add("检查最新版本…", null, (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(AppInfo.ReleasesUrl.AbsoluteUri) { UseShellExecute = true });
+            }
+            catch { }
+        });
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Shutdown());
 

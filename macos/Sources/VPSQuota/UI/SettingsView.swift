@@ -213,6 +213,21 @@ struct SettingsView: View {
             } header: {
                 Text("位置")
             }
+
+            Section {
+                LabeledContent("当前版本") {
+                    Text("v\(AppInfo.version)")
+                        .textSelection(.enabled)
+                }
+                LabeledContent("最新发布") {
+                    Link("检查最新版本 (GitHub Releases)", destination: AppInfo.releasesURL)
+                }
+                LabeledContent("开源主页") {
+                    Link("GitHub 仓库", destination: AppInfo.projectURL)
+                }
+            } header: {
+                Text("关于")
+            }
         }
         .formStyle(.grouped)
     }

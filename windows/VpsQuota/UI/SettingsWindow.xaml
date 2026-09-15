@@ -268,6 +268,36 @@
                                    Text="Vultr 的带宽数据本身是周期性刷新的，并非实时；刷新过于频繁没有意义。SSH + vnstat 的采集频率也会跟随这里的全局设置。"/>
                     </StackPanel>
                 </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="关于" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <DockPanel Margin="0,12,0,4">
+                            <TextBlock Text="当前版本" Style="{StaticResource FieldLabel}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="AboutVersionText" HorizontalAlignment="Right"
+                                       FontSize="13" Foreground="{StaticResource TextPrimaryBrush}"/>
+                        </DockPanel>
+                        <DockPanel Margin="0,8,0,4">
+                            <TextBlock Text="最新发布" Style="{StaticResource FieldLabel}" VerticalAlignment="Center"/>
+                            <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Hyperlink NavigateUri="https://github.com/striver2006/vps-traffic-quota/releases"
+                                           RequestNavigate="OnHyperlinkRequestNavigate">
+                                    检查最新版本 (GitHub Releases)
+                                </Hyperlink>
+                            </TextBlock>
+                        </DockPanel>
+                        <DockPanel Margin="0,4,0,0">
+                            <TextBlock Text="开源主页" Style="{StaticResource FieldLabel}" VerticalAlignment="Center"/>
+                            <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Hyperlink NavigateUri="https://github.com/striver2006/vps-traffic-quota"
+                                           RequestNavigate="OnHyperlinkRequestNavigate">
+                                    GitHub 仓库
+                                </Hyperlink>
+                            </TextBlock>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
 

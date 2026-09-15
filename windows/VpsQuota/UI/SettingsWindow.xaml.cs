@@ -1,8 +1,10 @@
 namespace VpsQuota.UI;
 
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Navigation;
 using VpsQuota.Core;
 using VpsQuota.Models;
 using VpsQuota.Storage;
@@ -41,6 +43,7 @@ public partial class SettingsWindow : Window
 
         ApiKeyBox.Password = _state.VultrApiKey;
         ConfigPathText.Text = new ConfigStore().FilePath;
+        AboutVersionText.Text = $"v{AppInfo.Version}";
 
         SelectInterval(_draft.RefreshIntervalMinutes);
         ReloadServerList();
@@ -383,5 +386,18 @@ public partial class SettingsWindow : Window
         // 登记失败时不关窗，否则那条错误提示刚显示出来就随窗口一起消失了。
         if (!CommitLaunchAtLogin()) return;
         Close();
+    }
+
+    private void OnHyperlinkRequestNavigate(object sender, RequestNavigateEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 忽略浏览器拉起失败
+        }
+        e.Handled = true;
     }
 }

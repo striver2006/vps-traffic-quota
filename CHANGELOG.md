@@ -4,7 +4,11 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [1.0.1] - 2026-09-15
+
+### 新增
+
+- **软件界面版本号显示与最新版本检查**：在主窗口、设置界面「关于」卡片以及常驻浮出面板（菜单栏/系统托盘）中直观展示当前版本号（`v1.0.1`），并在通用设置、常驻菜单中提供「检查最新版本…」入口，直达 GitHub Releases 页面，方便识别是否为最新版本。
 
 ### 修复
 
@@ -57,4 +61,5 @@
 - vnstat 按服务器本地时区切分自然日，本工具按 UTC 记账，非 UTC 服务器有数小时偏差
 - Windows 端的 DPAPI 密文换机器或换用户后无法解开，需重新填写 API Key
 
+[1.0.1]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.1
 [1.0.0]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.0
