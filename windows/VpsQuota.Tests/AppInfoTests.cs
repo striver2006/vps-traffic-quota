@@ -22,6 +22,6 @@ public class AppInfoTests
         Assert.Equal("https", AppInfo.ProjectUrl.Scheme);
         Assert.Equal("github.com", AppInfo.ProjectUrl.Host);
         Assert.Equal("https", AppInfo.ReleasesUrl.Scheme);
-        Assert.True(AppInfo.ReleasesUrl.AbsoluteUri.EndsWith("/releases"));
+        Assert.EndsWith("/releases", AppInfo.ReleasesUrl.AbsoluteUri);
     }
 }
