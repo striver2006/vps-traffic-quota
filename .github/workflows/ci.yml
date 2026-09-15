@@ -128,7 +128,7 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: 编译双架构（win-x64 / win-arm64）与制作安装包
-        run: pwsh ./build-installer.ps1 -Arch all -SelfContained $true
+        run: ./build-installer.ps1 -Arch all
 
       - name: 上传构建产物 (Windows Dist)
         uses: actions/upload-artifact@v7

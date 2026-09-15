@@ -8,12 +8,18 @@
 param(
     [ValidateSet("x64", "arm64", "all")]
     [string]$Arch = "all",
-    [bool]$SelfContained = $true
+    [object]$SelfContained = $true
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
+
+$isSelfContained = if ($SelfContained -is [bool]) {
+    $SelfContained
+} else {
+    [string]$SelfContained -notmatch '^(?i:false|0|no)$'
+}
 
 $Architectures = if ($Arch -eq "all") { @("x64", "arm64") } else { @($Arch) }
 $DistDir = Join-Path $ScriptDir "dist"
@@ -25,10 +31,11 @@ if (-not (Get-Command "iscc" -ErrorAction SilentlyContinue)) {
     $CommonPaths = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-        "${env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe"
+        "${env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe",
+        "${env:ChocolateyInstall}\bin\iscc.exe"
     )
     foreach ($p in $CommonPaths) {
-        if (Test-Path $p) { $IsccPath = $p; break }
+        if ($p -and (Test-Path $p)) { $IsccPath = $p; break }
     }
 }
 
@@ -37,8 +44,8 @@ foreach ($targetArch in $Architectures) {
     $outDir = Join-Path $ScriptDir "publish-$targetArch"
     if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 
-    Write-Host "==> 发布 $rid (SelfContained: $SelfContained)..." -ForegroundColor Cyan
-    $selfContainedArg = if ($SelfContained) { "--self-contained", "true" } else { "--self-contained", "false" }
+    Write-Host "==> 发布 $rid (SelfContained: $isSelfContained)..." -ForegroundColor Cyan
+    $selfContainedArg = if ($isSelfContained) { @("--self-contained", "true") } else { @("--self-contained", "false") }
     dotnet publish VpsQuota\VpsQuota.csproj -c Release -r $rid @selfContainedArg -o $outDir
 
     # 打包免安装 zip
@@ -48,9 +55,13 @@ foreach ($targetArch in $Architectures) {
     Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath -Force
 
     # 编译 Inno Setup 安装包
-    if (Get-Command $IsccPath -ErrorAction SilentlyContinue -or (Test-Path $IsccPath)) {
-        Write-Host "==> 制作安装包: VPSQuota-Setup-win-$targetArch.exe..." -ForegroundColor Cyan
+    $hasIscc = (Get-Command $IsccPath -ErrorAction SilentlyContinue) -or (Test-Path $IsccPath)
+    if ($hasIscc) {
+        Write-Host "==> 制作安装包: VPSQuota-Setup-win-$targetArch.exe (使用 $IsccPath)..." -ForegroundColor Cyan
         & $IsccPath "/DAppArch=$targetArch" "/DSourceDir=publish-$targetArch" "installer.iss"
+        if ($LASTEXITCODE -ne 0) {
+            throw "ISCC 编译安装包失败，退出码: $LASTEXITCODE"
+        }
     } else {
         Write-Warning "未找到 Inno Setup (ISCC.exe)，跳过安装包编译。可运行 choco install innosetup 安装。"
     }
