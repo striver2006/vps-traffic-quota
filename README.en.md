@@ -70,7 +70,20 @@ accumulate indefinitely — and a failed collection never blanks out the UI.
 
 ## 🚀 Quick Start (快速开始)
 
-### 1. Provider side
+### 📦 Download Installers (Recommended)
+
+Download the latest releases from [GitHub Releases](https://github.com/striver2006/vps-traffic-quota/releases):
+
+- **macOS**: Download `VPSQuota-macos.dmg` (**Universal Binary**, natively supporting both Apple Silicon M-series and Intel Mac). Open the DMG and drag the app into your `Applications` folder.
+- **Windows**:
+  - **Intel / AMD 64-bit**: Download `VPSQuota-Setup-win-x64.exe` installer (self-contained runtime, no admin privileges required) or `VPSQuota-win-x64.zip` portable archive.
+  - **ARM64 (Surface / Snapdragon PC)**: Download `VPSQuota-Setup-win-arm64.exe` installer or `VPSQuota-win-arm64.zip` portable archive.
+
+---
+
+### 🛠️ Build from Source
+
+#### 1. Provider side
 
 - Vultr → [`docs/setup-vultr.md`](docs/setup-vultr.md) (create an API key — **mind the IP allowlist**)
 - DMIT → [`docs/setup-dmit.md`](docs/setup-dmit.md) (install vnstat, set up key-based SSH)
@@ -79,21 +92,15 @@ accumulate indefinitely — and a failed collection never blanks out the UI.
 > [config reference](docs/config-reference.md) uses tables and is largely readable
 > without it; open an issue in English if anything is unclear.
 
-### 2. macOS
+#### 2. macOS
 
 Requires Xcode command line tools (Swift 6+, macOS 15+).
 
 ```bash
 cd macos
-swift test                  # run unit tests
-./scripts/build-app.sh      # produces build/VPSQuota.app
-open build/VPSQuota.app
-```
-
-To install:
-
-```bash
-cp -R build/VPSQuota.app /Applications/
+swift test                           # run unit tests
+./scripts/build-app.sh release       # build Universal binary and produce build/VPSQuota.dmg
+./scripts/build-app.sh --install     # build locally and install/replace to /Applications and launch
 ```
 
 On first launch, click the menu bar icon → Settings and fill in your API key and servers.
@@ -132,7 +139,7 @@ swift run vpsquota-cli refresh                   # collect once and print usage
 swift run vpsquota-cli status                    # read local data only, no network
 ```
 
-### 3. Windows
+#### 3. Windows
 
 Requires the .NET 8 SDK and Windows 10 1803+ (uses the built-in OpenSSH client).
 
@@ -140,7 +147,7 @@ Requires the .NET 8 SDK and Windows 10 1803+ (uses the built-in OpenSSH client).
 cd windows
 dotnet build VpsQuota.sln -c Release
 dotnet test VpsQuota.sln -c Release --no-build    # run unit tests
-.\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
+.\build-installer.ps1                             # publish win-x64 & win-arm64 and create installers
 ```
 
 To launch at login, tick "开机时自动启动" under Settings → 通用设置 → 启动. It writes a

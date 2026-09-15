@@ -60,26 +60,33 @@ DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看�
 
 ## 🚀 快速开始 (Quick Start)
 
-### 1. 准备服务商侧
+### 📦 安装包下载（推荐）
+
+从 [GitHub Releases](https://github.com/striver2006/vps-traffic-quota/releases) 下载最新安装包：
+
+- **macOS**：下载 `VPSQuota-macos.dmg`（**Universal 通用二进制**，原生支持 Apple Silicon M 系列与 Intel Mac），双击打开并将应用拖入 `Applications` 即可。
+- **Windows**：
+  - **Intel / AMD 64位**：下载 `VPSQuota-Setup-win-x64.exe` 安装包（内置运行时，免管理员权限直接安装）或 `VPSQuota-win-x64.zip` 便携包。
+  - **ARM64（Surface / 骁龙 PC）**：下载 `VPSQuota-Setup-win-arm64.exe` 安装包或 `VPSQuota-win-arm64.zip` 便携包。
+
+---
+
+### 🛠️ 从源码构建
+
+#### 1. 准备服务商侧
 
 - Vultr → [`docs/setup-vultr.md`](docs/setup-vultr.md)（建 API Key，**注意 IP 白名单**）
 - DMIT → [`docs/setup-dmit.md`](docs/setup-dmit.md)（装 vnstat，配免密 SSH）
 
-### 2. macOS
+#### 2. macOS
 
 需要 Xcode 命令行工具（Swift 6+，macOS 15+）。
 
 ```bash
 cd macos
-swift test                  # 跑单元测试
-./scripts/build-app.sh      # 生成 build/VPSQuota.app
-open build/VPSQuota.app
-```
-
-装到应用目录：
-
-```bash
-cp -R build/VPSQuota.app /Applications/
+swift test                           # 跑单元测试
+./scripts/build-app.sh release       # 编译 Universal 架构并生成 build/VPSQuota.dmg
+./scripts/build-app.sh --install     # 本地编译并替换安装到 /Applications 并启动
 ```
 
 首次启动后点菜单栏图标 → 设置，填入 API Key 和服务器。
@@ -118,7 +125,7 @@ swift run vpsquota-cli refresh                   # 采集一次并打印用量
 swift run vpsquota-cli status                    # 只读本地数据，不联网
 ```
 
-### 3. Windows
+#### 3. Windows
 
 需要 .NET 8 SDK，Windows 10 1803+（依赖系统自带的 OpenSSH 客户端）。
 
@@ -126,7 +133,7 @@ swift run vpsquota-cli status                    # 只读本地数据，不联�
 cd windows
 dotnet build VpsQuota.sln -c Release
 dotnet test VpsQuota.sln -c Release --no-build    # 跑单元测试
-.\VpsQuota\bin\Release\net8.0-windows\VpsQuota.exe
+.\build-installer.ps1                             # 发布 win-x64 与 win-arm64 并制作安装包
 ```
 
 开机自启：在「设置 → 通用设置 → 启动」里勾选「开机时自动启动」。

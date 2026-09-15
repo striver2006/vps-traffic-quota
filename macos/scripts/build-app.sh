@@ -25,12 +25,19 @@ ROOT="$(pwd)"
 CONFIGURATION="release"
 INSTALL=0
 CLEAN=0
+UNIVERSAL=1
+MAKE_DMG=1
 for arg in "$@"; do
     case "$arg" in
-        release|debug) CONFIGURATION="$arg" ;;
+        release) CONFIGURATION="release"; UNIVERSAL=1; MAKE_DMG=1 ;;
+        debug) CONFIGURATION="debug"; UNIVERSAL=0; MAKE_DMG=0 ;;
         --install) INSTALL=1 ;;
         --clean) CLEAN=1 ;;
-        *) echo "未知参数: $arg（可用: release debug --install --clean）" >&2; exit 1 ;;
+        --universal) UNIVERSAL=1 ;;
+        --no-universal) UNIVERSAL=0 ;;
+        --dmg) MAKE_DMG=1 ;;
+        --no-dmg) MAKE_DMG=0 ;;
+        *) echo "未知参数: $arg（可用: release debug --install --clean --universal --no-universal --dmg --no-dmg）" >&2; exit 1 ;;
     esac
 done
 
@@ -42,6 +49,7 @@ VERSION="1.0.1"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
+DMG_PATH="$ROOT/build/$APP_NAME.dmg"
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 # 删除 .app 之前先注销它的 LaunchServices 注册；路径不存在或 lsregister 不可用时静默跳过
@@ -53,15 +61,20 @@ if [ "$CLEAN" -eq 1 ]; then
     echo "==> 注销 LaunchServices 注册并删除构建产物..."
     unregister_ls "$APP_DIR"
     rm -rf "$APP_DIR"
-    # 图标中间产物不是 bundle、不进 LaunchServices，直接删
-    rm -rf "$ROOT/build/$APP_NAME.iconset" "$ROOT/build/$APP_NAME.icns"
+    # 图标中间产物与 DMG 不是 bundle、不进 LaunchServices，直接删
+    rm -rf "$ROOT/build/$APP_NAME.iconset" "$ROOT/build/$APP_NAME.icns" "$DMG_PATH" "$ROOT/build/dmg-staging"
     echo "==> 清理完成。/Applications 里的安装版未动（要卸载它：注销 + 删除 /Applications/$APP_NAME.app）"
     exit 0
 fi
 
-echo "==> 编译（${CONFIGURATION}）"
-swift build -c "$CONFIGURATION" --product "$APP_NAME"
-BIN_PATH="$(swift build -c "$CONFIGURATION" --product "$APP_NAME" --show-bin-path)"
+BUILD_ARGS=(-c "$CONFIGURATION" --product "$APP_NAME")
+if [ "$UNIVERSAL" -eq 1 ]; then
+    BUILD_ARGS+=(--arch arm64 --arch x86_64)
+fi
+
+echo "==> 编译（${CONFIGURATION}$( [ "$UNIVERSAL" -eq 1 ] && echo " · Universal arm64+x86_64" || echo "" )）"
+swift build "${BUILD_ARGS[@]}"
+BIN_PATH="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
 echo "==> 生成图标"
 # 图标用代码画（scripts/make-icon.swift），不往仓库里塞二进制资源：
@@ -217,8 +230,34 @@ if [ "$CODESIGN_IDENTITY" != "-" ]; then
     echo "    签名身份：$(codesign -dvv "$APP_DIR" 2>&1 | grep '^Authority=' | head -1 | cut -d= -f2-)"
 fi
 
+# ── 制作 DMG 安装包 ─────────────────────────────
+if [ "$MAKE_DMG" -eq 1 ]; then
+    echo "==> 制作 DMG 安装包"
+    DMG_STAGING="$ROOT/build/dmg-staging"
+    rm -rf "$DMG_STAGING" "$DMG_PATH"
+    mkdir -p "$DMG_STAGING"
+
+    ditto "$APP_DIR" "$DMG_STAGING/$APP_NAME.app"
+    ln -s /Applications "$DMG_STAGING/Applications"
+
+    hdiutil create \
+        -volname "$DISPLAY_NAME" \
+        -srcfolder "$DMG_STAGING" \
+        -ov \
+        -format UDZO \
+        "$DMG_PATH"
+    rm -rf "$DMG_STAGING"
+
+    if [ "$CODESIGN_IDENTITY" != "-" ]; then
+        echo "    签名 DMG"
+        codesign "${SIGN_ARGS[@]}" "$DMG_PATH"
+        codesign --verify --strict "$DMG_PATH"
+    fi
+    echo "    已生成 DMG：$DMG_PATH"
+fi
+
 # ── 公证（仅 NOTARIZE=1）────────────────────────
-# 只有要把 .app 发给别人时才需要：别人下载到的包带 quarantine 标记，
+# 只有要把 .app / .dmg 发给别人时才需要：别人下载到的包带 quarantine 标记，
 # 没有公证票据就会被 Gatekeeper 拦下（"无法验证开发者"）。
 # 自己机器上构建出来的没有该标记，日常调试用不着，也就不必每次等这几十秒。
 if [ "${NOTARIZE:-0}" = "1" ]; then
@@ -235,18 +274,21 @@ if [ "${NOTARIZE:-0}" = "1" ]; then
         exit 1
     fi
 
-    # 公证服务不收 .app 目录，得先打包。必须用 ditto ——
-    # zip 命令不保留符号链接和扩展属性，传上去会校验失败。
-    ZIP="$ROOT/build/$APP_NAME-notarize.zip"
-    rm -f "$ZIP"
-    ditto -c -k --keepParent "$APP_DIR" "$ZIP"
+    if [ "$MAKE_DMG" -eq 1 ] && [ -f "$DMG_PATH" ]; then
+        SUBMIT_TARGET="$DMG_PATH"
+    else
+        ZIP="$ROOT/build/$APP_NAME-notarize.zip"
+        rm -f "$ZIP"
+        ditto -c -k --keepParent "$APP_DIR" "$ZIP"
+        SUBMIT_TARGET="$ZIP"
+    fi
 
     set +e
-    SUBMIT_LOG="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)"
+    SUBMIT_LOG="$(xcrun notarytool submit "$SUBMIT_TARGET" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)"
     SUBMIT_RC=$?
     set -e
     echo "$SUBMIT_LOG"
-    rm -f "$ZIP"
+    [ "$SUBMIT_TARGET" != "$DMG_PATH" ] && rm -f "$SUBMIT_TARGET"
 
     if [ "$SUBMIT_RC" -ne 0 ] || ! grep -q "status: Accepted" <<<"$SUBMIT_LOG"; then
         echo "    ❌ 公证未通过。" >&2
@@ -261,9 +303,13 @@ if [ "${NOTARIZE:-0}" = "1" ]; then
         exit 1
     fi
 
-    # 把票据钉进 bundle：用户断网时 Gatekeeper 也能就地验证，不必回连 Apple。
+    # 把票据钉进 bundle 和 DMG
     xcrun stapler staple "$APP_DIR"
     xcrun stapler validate "$APP_DIR"
+    if [ "$MAKE_DMG" -eq 1 ] && [ -f "$DMG_PATH" ]; then
+        xcrun stapler staple "$DMG_PATH"
+        xcrun stapler validate "$DMG_PATH"
+    fi
     echo "    Gatekeeper：$(spctl -a -vv "$APP_DIR" 2>&1 | tail -1)"
 fi
 

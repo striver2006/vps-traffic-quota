@@ -10,6 +10,8 @@ DerivedData/
 # ── Windows / .NET ────────────────────────────
 windows/**/bin/
 windows/**/obj/
+windows/publish*/
+windows/dist/
 *.user
 .vs/
 

@@ -56,13 +56,16 @@ jobs:
 
       # 未装 pandoc 时 build-app.sh 会自动退回随包分发原始 Markdown，
       # 不会失败。装 pandoc 的完整打包留给发布流程
-      - name: 组装 .app
+      - name: 组装 Universal .app 与 .dmg
         run: ./scripts/build-app.sh release
 
-      - name: 校验 bundle
+      - name: 校验 bundle 与架构
         run: |
           test -x build/VPSQuota.app/Contents/MacOS/VPSQuota
           test -f build/VPSQuota.app/Contents/Resources/VPSQuota.icns
+          test -f build/VPSQuota.dmg
+          file build/VPSQuota.app/Contents/MacOS/VPSQuota | grep 'x86_64'
+          file build/VPSQuota.app/Contents/MacOS/VPSQuota | grep 'arm64'
           plutil -lint build/VPSQuota.app/Contents/Info.plist
           codesign --verify --deep --strict --verbose=2 build/VPSQuota.app
 
@@ -71,16 +74,24 @@ jobs:
       - name: 压缩 .app
         run: ditto -c -k --keepParent build/VPSQuota.app build/VPSQuota.app.zip
 
-      - name: 上传构建产物
+      - name: 上传构建产物 (ZIP)
         uses: actions/upload-artifact@v7
         with:
-          name: VPSQuota-macos
+          name: VPSQuota-macos-zip
           path: macos/build/VPSQuota.app.zip
           if-no-files-found: error
           retention-days: 14
 
+      - name: 上传构建产物 (DMG)
+        uses: actions/upload-artifact@v7
+        with:
+          name: VPSQuota-macos-dmg
+          path: macos/build/VPSQuota.dmg
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
-    name: Windows · 构建
+    name: Windows · 构建与打包
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -113,13 +124,16 @@ jobs:
       - name: 单元测试
         run: dotnet test VpsQuota.sln -c Release --no-build
 
-      - name: 发布（框架依赖，需目标机装 .NET 8 Desktop Runtime）
-        run: dotnet publish VpsQuota/VpsQuota.csproj -c Release --no-build -o publish
+      - name: 安装 Inno Setup
+        run: choco install innosetup -y --no-progress
 
-      - name: 上传构建产物
+      - name: 编译双架构（win-x64 / win-arm64）与制作安装包
+        run: pwsh ./build-installer.ps1 -Arch all -SelfContained $true
+
+      - name: 上传构建产物 (Windows Dist)
         uses: actions/upload-artifact@v7
         with:
-          name: VpsQuota-windows
-          path: windows/publish/
+          name: VpsQuota-windows-dist
+          path: windows/dist/
           if-no-files-found: error
           retention-days: 14
