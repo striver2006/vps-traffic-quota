@@ -254,7 +254,7 @@ final class StatusItemController: NSObject {
         guard dismissMonitors.isEmpty else { return }
         let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
 
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { _ in
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { [weak self] _ in
             Task { @MainActor [weak self] in self?.hideIfClickedOutside() }
         }) {
             dismissMonitors.append(global)
