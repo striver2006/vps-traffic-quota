@@ -3,7 +3,7 @@ import Foundation
 /// 统一管理应用版本与项目元信息。
 public enum AppInfo: Sendable {
     /// 默认或编译回退版本号。
-    public static let fallbackVersion = "1.0.1"
+    public static let fallbackVersion = "1.0.2"
 
     /// 项目仓库主页。
     public static let projectURL = URL(string: "https://github.com/striver2006/vps-traffic-quota")!

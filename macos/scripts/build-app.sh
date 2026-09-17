@@ -44,7 +44,7 @@ done
 APP_NAME="VPSQuota"
 DISPLAY_NAME="VPS 流量"
 BUNDLE_ID="io.vpsquota.VPSTrafficQuota"
-VERSION="1.0.1"
+VERSION="1.0.2"
 
 APP_DIR="$ROOT/build/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"

@@ -4,6 +4,15 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-09-17
+
+### 优化与重构
+
+- **macOS：精简菜单栏状态项管理并移除提示横幅**：
+  - 移除了此前针对 macOS 控制中心「拉黑隐藏」的特殊检测逻辑与界面警告横幅。
+  - 移除了频繁的后台看门狗轮询（定时心跳、启动探测梯、唤醒监听）与强制自愈重建机制，杜绝外接屏插拔、休眠唤醒或全屏切换时的假阳性误判与图标闪烁跳动。
+  - 遵循标准 AppKit 规范常驻持有 `NSStatusItem` 生命周期，大幅降低后台 IPC 开销，保持界面纯粹安静。
+
 ## [1.0.1] - 2026-09-15
 
 ### 新增
@@ -61,5 +70,6 @@
 - vnstat 按服务器本地时区切分自然日，本工具按 UTC 记账，非 UTC 服务器有数小时偏差
 - Windows 端的 DPAPI 密文换机器或换用户后无法解开，需重新填写 API Key
 
+[1.0.2]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.2
 [1.0.1]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.1
 [1.0.0]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.0

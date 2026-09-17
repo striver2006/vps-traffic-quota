@@ -9,7 +9,7 @@ using System.Reflection;
 public static class AppInfo
 {
     /// <summary>默认或编译回退版本号。</summary>
-    public const string FallbackVersion = "1.0.1";
+    public const string FallbackVersion = "1.0.2";
 
     /// <summary>项目仓库主页。</summary>
     public static readonly Uri ProjectUrl = new("https://github.com/striver2006/vps-traffic-quota");
