@@ -190,21 +190,10 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 「呈现方式」偏好存在 UserDefaults 而不是 `config.json` —— 它是 macOS 专属的界面设置，
 不该混进两端共用、可互相拷贝的那份配置。
 
-**macOS 26 还会拉黑状态项。** ControlCenter 在自己的 `trackedApplications` 表里按
-**负责进程**归属菜单项，本 bundle id 只要出现在任意一条 `isAllowed=false` 记录的
-`menuItemLocations` 里就被隐藏 —— 应用侧对象、frame、可点击性全部正常，用户就是看不见图标。
-最常见的中招方式是从 IDE 的集成终端直接跑可执行文件：那样负责进程是 IDE，菜单栏项被归到
-IDE 名下，随它一起被拉黑。对策分两层：
-
-- **判定**：`MenuBarMirror` 看「控制中心有没有为它渲染菜单栏镜像」（纯几何判定会被骗过），
-  `StatusItemHealth` 把它与几何、可见性一起折成一个 verdict，`SelfHealingMachine` 负责编排。
-- **处置**：重建治不好拉黑（每个新 PID 照样秒拒），所以 `notMirrored` 只重建一次，
-  再无镜像就进 `blockedBySystem` 终态 —— 停止重建、只留心跳，并在主窗口与设置界面挂一条
-  横幅把用户引到「系统设置 › 控制中心 › 菜单栏 › 应用程序」。放行是秒生效的，
-  复查到镜像回来就自动转健康、横幅自动消失。
-
-机制详录与手动排查手册见
-[`TROUBLESHOOTING_菜单栏图标不显示.md`](TROUBLESHOOTING_菜单栏图标不显示.md)。
+**关于 macOS 菜单栏图标与系统控制中心：** macOS 26 的 ControlCenter 可能按负责进程管理菜单栏项，
+若从 IDE 集成终端直接运行，可能受系统控制中心设置影响。应用遵循标准 AppKit 规范常驻持有 `NSStatusItem`，
+不再在界面上常驻检测或弹窗打扰；如遇系统隐藏，可在「系统设置 › 控制中心 › 菜单栏 › 应用程序」中手动放行。
+机制与排查方法见 [`TROUBLESHOOTING_菜单栏图标不显示.md`](TROUBLESHOOTING_菜单栏图标不显示.md)。
 
 **开机自启同样不进 `config.json`**，而且连本地偏好都不存：它是「这台机器上的这次安装」
 的属性，配置文件拷到另一台机器上时不该把它带过去。两端各自把状态交给系统持有 ——

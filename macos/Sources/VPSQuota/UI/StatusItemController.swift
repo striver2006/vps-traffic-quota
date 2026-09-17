@@ -7,80 +7,28 @@ import VPSQuotaCore
 /// 没有沿用 SwiftUI 的 `MenuBarExtra`：它只在**点击**时展开。
 /// 要做到"移上去就显示"，必须在状态项的按钮上挂一个 `NSTrackingArea`，
 /// 而那个按钮只有自己持有 `NSStatusItem` 才拿得到 —— MenuBarExtra 不暴露它。
-///
-/// macOS 26 起状态项由系统进程托管，应用这边拿到的按钮窗口有两个坑，都在这里绕开：
-/// 1. 显示器睡眠/重连后，按钮窗口的 frame 停在旧坐标不再更新（见 `resolveItemRect`）。
-/// 2. NSPopover 的 `.transient` 会把点击图标本身当成"点了面板外面"（见 `installDismissMonitors`）。
-///
-/// 此外还有第三种"看不见"：ControlCenter 把状态项拉黑，不给它画菜单栏镜像。
-/// 应用侧对象、frame、可点击性全部正常，纯几何判定会误判健康。
-/// 这属于"自愈"链路：见文末「状态项健康自愈」一节与
-/// `VPSQuotaCore/MenuBar/` 下的 `StatusItemHealth` / `MenuBarMirror`。
 @MainActor
 final class StatusItemController: NSObject {
     private let model: AppModel
     private let popover = NSPopover()
-    /// 面板的定位锚。面板不直接挂在按钮上，因为按钮窗口的 frame 不可信。
+    /// 面板的定位锚。面板不直接挂在按钮上，因为按钮窗口的 frame 在特定场景下不可信。
     private let anchor: NSWindow
 
     private var statusItem: NSStatusItem?
     private var trackingArea: NSTrackingArea?
-    private var screenObserver: NSObjectProtocol?
-    private var reinstallTask: Task<Void, Never>?
-    private var lastReinstall = Date.distantPast
 
-    // MARK: - 健康自愈状态
-
-    /// 状态项在菜单栏里的位置持久化名。重建时靠它保住排序；
-    /// 系统写的两个 UserDefaults 键也是拿它拼的，所以只能有这一个来源。
+    /// 状态项在菜单栏里的位置持久化名，保住用户排序。
     private static let autosaveName = "VPSQuota"
-
-    /// 状态项健康心跳间隔：太久会放大"图标不见了"的时长，太短则频繁无谓探测
-    private static let heartbeatInterval: TimeInterval = 300
-    /// 判定掉线后的快探测间隔
-    private static let probeInterval: TimeInterval = 15
-    /// 被系统拉黑期间的复查间隔。用户在系统设置里放行是秒生效的，只差我们探测一次
-    private static let blockedProbeInterval: TimeInterval = 60
-    /// 启动校验梯。登录自启时菜单栏服务未必就绪，隔着几档复查
-    private static let launchProbeLadder: [TimeInterval] = [2, 5, 15, 60]
-    /// 显示器重配置后这段时间内几何不可信，一律按 indeterminate 处理
-    private static let screenQuietWindow: TimeInterval = 3
-    /// 按钮窗口 frame 被判过期后，这段时间内不拿它比几何
-    private static let frameStaleWindow: TimeInterval = 120
-
-    private var heartbeatTimer: Timer?
-    private var healthCheckWorkItem: DispatchWorkItem?
-    private var wakeObservers: [NSObjectProtocol] = []
-    private var screenReconfigureUntil: Date?
-
-    /// 自愈编排的全部状态。判定与决策都在 `VPSQuotaCore` 里的纯值类型中，可单测；
-    /// 这里只负责采样、调度、日志和告知用户。
-    private var healing = StatusItemHealth.SelfHealingMachine(
-        probeInterval: probeInterval,
-        blockedProbeInterval: blockedProbeInterval
-    )
-
-    /// 被拉黑时把主窗口顶出来一次的回调（由 `App.bootstrap()` 注入）。
-    /// 没有 Dock 图标时，用户连个能看到提示的窗口都打不开。
-    var presentFallbackWindow: (() -> Void)?
-    private var didPresentBlockedFallback = false
 
     /// 图标在屏幕上的矩形，由 `resolveItemRect` 在鼠标落在图标上时刷新。
     private var itemRect: NSRect?
-
-    /// `resolveItemRect` 最近一次判定按钮窗口 frame **可信**的时刻（矩形确实罩住了鼠标）
-    private var lastFrameTrustedAt: Date?
-    /// `resolveItemRect` 最近一次判定按钮窗口 frame **过期**的时刻（走了以鼠标为中心的兜底）
-    private var lastFrameStaleAt: Date?
 
     /// 悬停的意图延时。鼠标只是从菜单栏扫过时不该弹面板。
     private var hoverTask: Task<Void, Never>?
     /// 悬停打开后跟踪鼠标位置的关闭轮询。
     private var closeTimer: Timer?
 
-    /// 轮询连续判定"鼠标在外"的次数。托管状态项的窗口坐标和 tracking 事件都不可信，
-    /// 单次误判"已离开"就直接收起的话，紧跟着的假 entered 又会把面板打开，
-    /// 关-开-关循环就是肉眼看到的一闪一闪。连续两拍（约 0.6 秒）都在外才真正收起。
+    /// 轮询连续判定"鼠标在外"的次数。
     private var awayPollCount = 0
 
     /// 面板是点击打开的。此时不跟随鼠标关闭 —— 用户是主动打开的，
@@ -88,7 +36,6 @@ final class StatusItemController: NSObject {
     private var isPinned = false
 
     /// 固定打开期间监听"点在面板外"和 Esc 的事件监视器。
-    /// Esc 只在应用本来就在前台时收得到 —— 面板不抢激活，键盘事件不归我们。
     private var dismissMonitors: [Any] = []
 
     init(model: AppModel) {
@@ -105,10 +52,7 @@ final class StatusItemController: NSObject {
 
         super.init()
 
-        // 不用 `.transient`：macOS 26 上点击图标这一下会被判成"点了面板外面"，
-        // 面板刚弹出就被收回。关闭时机全部自己管。
         popover.behavior = .applicationDefined
-        // 悬停面板要跟手。淡入动画会让快速划过菜单栏时留下一串残影。
         popover.animates = false
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(dismiss: { [weak self] in self?.hide() })
@@ -117,7 +61,6 @@ final class StatusItemController: NSObject {
 
         sync()
         observeModel()
-        startSelfHealing()
     }
 
     // MARK: - 状态项的装卸
@@ -133,21 +76,17 @@ final class StatusItemController: NSObject {
         guard statusItem == nil else { return }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // 重建状态项时保住它在菜单栏里的位置。
         item.autosaveName = Self.autosaveName
-        // 重建时显式拉回可见，避免坏的持久化可见性被沿用
         item.isVisible = true
         statusItem = item
 
         guard let button = item.button else {
-            Log.menubar.error("状态项安装失败：button 为 nil，待健康检查重试")
+            Log.menubar.error("状态项安装失败：button 为 nil")
             return
         }
         button.target = self
         button.action = #selector(handleClick)
 
-        // .inVisibleRect：文字从"1.2 TB"变成"980 GB"时按钮会变宽，
-        // 让 AppKit 自己跟着 bounds 走，省掉每次刷新都重建追踪区。
         let area = NSTrackingArea(
             rect: button.bounds,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -156,21 +95,6 @@ final class StatusItemController: NSObject {
         )
         button.addTrackingArea(area)
         trackingArea = area
-
-        if screenObserver == nil {
-            screenObserver = NotificationCenter.default.addObserver(
-                forName: NSApplication.didChangeScreenParametersNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    // 重配置期间几何不可信，先划一段静默窗口再查
-                    self.screenReconfigureUntil = Date().addingTimeInterval(Self.screenQuietWindow)
-                    self.scheduleHealthCheck(delay: 1.5, reason: "screenParams")
-                }
-            }
-        }
     }
 
     private func uninstall() {
@@ -189,31 +113,13 @@ final class StatusItemController: NSObject {
         statusItem = nil
     }
 
-    /// 换一个新窗口：旧窗口的 frame 一旦过期就不会再自己恢复。
-    /// 显示器刚重连时系统还在重排菜单栏，稍等再建；短时间内不重复建，免得图标反复闪。
-    private func scheduleReinstall() {
-        guard statusItem != nil, Date().timeIntervalSince(lastReinstall) > 10 else { return }
-        reinstallTask?.cancel()
-        reinstallTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, let self, self.statusItem != nil else { return }
-            self.lastReinstall = Date()
-            self.removeStatusItem()
-            self.install()
-            self.updateButton()
-        }
-    }
-
     private func updateButton() {
         guard let button = statusItem?.button else { return }
 
         let image = NSImage(systemSymbolName: iconName, accessibilityDescription: "VPS 流量")
-        // 模板图像才会跟着菜单栏的深浅色自动反转。
         image?.isTemplate = true
         button.image = image
 
-        // 用 button.title 而不是 attributedTitle：后者要自己指定颜色，
-        // 而写死的颜色不会跟随菜单栏外观变化（浅色壁纸下的深色菜单栏就会瞎掉）。
         button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         if let title = model.menuBarTitle {
             button.title = " " + title
@@ -222,9 +128,6 @@ final class StatusItemController: NSObject {
             button.title = ""
             button.imagePosition = .imageOnly
         }
-
-        // 刻意不设 button.toolTip：悬停已经会浮出完整面板，
-        // 系统 tooltip 再冒出来只会盖在它上面，说的还是同一件事。
     }
 
     /// 图标随所选那台的严重程度变化，不展开面板也能察觉异常。
@@ -236,7 +139,6 @@ final class StatusItemController: NSObject {
     }
 
     /// 模型是 `@Observable`，这里用观察事务把变化接回 AppKit。
-    /// `withObservationTracking` 只回调一次，所以每次都要重新登记。
     private func observeModel() {
         withObservationTracking {
             _ = model.displayMode
@@ -255,10 +157,6 @@ final class StatusItemController: NSObject {
     // MARK: - 图标的位置
 
     /// 以"鼠标此刻就在图标上"为前提刷新 `itemRect`，只在 entered 和点击时调用。
-    ///
-    /// 按钮窗口报的矩形只有鼠标确实落在其中时才可信。显示器睡眠/重连后它会停在旧坐标
-    /// （日志里见过 1920×1080 空间里的位置），照它定位面板会跑到屏幕中间。
-    /// 不可信就以鼠标为中心、按钮宽度为宽，贴着菜单栏重建一个，并换一个新窗口。
     private func resolveItemRect() {
         guard let button = statusItem?.button else { return }
         let point = NSEvent.mouseLocation
@@ -267,9 +165,6 @@ final class StatusItemController: NSObject {
             let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
             if rect.insetBy(dx: -2, dy: -8).contains(point) {
                 itemRect = rect
-                // 这是仓库里唯一能证实"窗口 frame 此刻是新鲜的"的时机，
-                // 镜像匹配要靠它来决定能不能信几何，别让这个结论白白丢掉。
-                lastFrameTrustedAt = Date()
                 return
             }
         }
@@ -277,20 +172,14 @@ final class StatusItemController: NSObject {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else {
             return
         }
-        lastFrameStaleAt = Date()
         let height = NSStatusBar.system.thickness
         let width = button.bounds.width
         itemRect = NSRect(x: point.x - width / 2, y: screen.frame.maxY - height, width: width, height: height)
-        scheduleReinstall()
     }
 
     private var pointerIsOverItem: Bool {
         let point = NSEvent.mouseLocation
-        // 菜单栏底边和面板顶边之间有几个点的缝，鼠标穿过时不该被判成"已离开"。
         if itemRect?.insetBy(dx: -2, dy: -8).contains(point) == true { return true }
-        // 缓存的 itemRect 可能过期（托管的按钮窗口坐标不可信，见 resolveItemRect）。
-        // 这里用实时坐标兜底：只要按钮此刻确实压在鼠标下就不算离开 ——
-        // 收起宁可慢半拍，误关之后紧跟着重开，面板就闪了。
         if let button = statusItem?.button, let window = button.window {
             let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
             if rect.width > 1, rect.insetBy(dx: -2, dy: -8).contains(point) {
@@ -302,10 +191,6 @@ final class StatusItemController: NSObject {
 
     // MARK: - 悬停与点击
 
-    // 必须显式写死 selector。Swift 给 `mouseEntered(with:)` 自动生成的 @objc 名字是
-    // `mouseEnteredWith:`（只有 override NSResponder 的同名方法才会保留原名），
-    // 而 AppKit 向 NSTrackingArea 的 owner 发的是 `mouseEntered:` —— 名字对不上
-    // 就静默收不到任何悬停事件，点击却照常工作，极难看出问题出在哪。
     @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {
         resolveItemRect()
         hoverTask?.cancel()
@@ -317,7 +202,6 @@ final class StatusItemController: NSObject {
     }
 
     @objc(mouseExited:) func mouseExited(with event: NSEvent) {
-        // 窗口 frame 过期时 AppKit 会紧跟 entered 补一个假的 exited，鼠标其实还在图标上。
         guard !pointerIsOverItem else { return }
         hoverTask?.cancel()
         hoverTask = nil
@@ -348,8 +232,6 @@ final class StatusItemController: NSObject {
             closeTimer?.invalidate()
             closeTimer = nil
             installDismissMonitors()
-            // 刻意不 NSApp.activate：激活会把压在后面的主窗口一起顶到前面，
-            // 而面板里没有任何需要键盘焦点的东西。
         } else {
             scheduleAutoClose()
         }
@@ -378,8 +260,6 @@ final class StatusItemController: NSObject {
             dismissMonitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(matching: clicks.union(.keyDown), handler: { event in
-            // NSEvent 不是 Sendable，先把要用的字段取出来再进主线程闭包。
-            // keyCode 只能对键盘事件读，对鼠标事件读会抛异常、把这次点击吞掉。
             let isKeyDown = event.type == .keyDown
             let keyCode: UInt16 = isKeyDown ? event.keyCode : 0
             let consumed = MainActor.assumeIsolated { [weak self] () -> Bool in
@@ -389,8 +269,6 @@ final class StatusItemController: NSObject {
                     self.hide()
                     return true
                 }
-                // 等这一下点击先送到目标窗口（比如配置窗口的关闭按钮）再关面板，
-                // 同步关会改变窗口层级，把点击吃掉。
                 Task { @MainActor in self.hideIfClickedOutside() }
                 return false
             }
@@ -411,17 +289,12 @@ final class StatusItemController: NSObject {
         if let window = popover.contentViewController?.view.window, window.frame.contains(point) {
             return
         }
-        // 点在图标上交给 handleClick 做开关，这里不抢。
         guard !pointerIsOverItem else { return }
         hide()
     }
 
     // MARK: - 悬停打开后的关闭
 
-    /// 悬停打开的面板靠轮询鼠标位置来关闭。
-    ///
-    /// 不能只依赖 `mouseExited`：面板一弹出来就盖住了下方区域，鼠标从图标移进面板时
-    /// 必然会先触发一次 exited，此时若直接关闭，面板就点不到了。
     private func scheduleAutoClose() {
         guard !isPinned else { return }
         closeTimer?.invalidate()
@@ -430,7 +303,6 @@ final class StatusItemController: NSObject {
         let timer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.closeIfPointerAway() }
         }
-        // 面板里有滚动等 tracking 交互，默认模式下定时器会被挡住。
         RunLoop.main.add(timer, forMode: .common)
         closeTimer = timer
     }
@@ -457,313 +329,5 @@ final class StatusItemController: NSObject {
             return true
         }
         return pointerIsOverItem
-    }
-
-    // MARK: - 状态项健康自愈
-    //
-    // macOS 26 的 ControlCenter 会把被拉黑的状态项隐藏，应用侧的对象、frame、
-    // 可点击性全部正常——纯几何判定会误判健康，用户就是"看不见图标"。
-    // 唯一可靠的判据是"控制中心有没有为它渲染菜单栏镜像"：隔档 + 心跳地校验它，
-    // 判定掉线先重建（治真掉线），确认重建无效则判为系统拉黑、停手并告知用户
-    // （见 docs/TROUBLESHOOTING_菜单栏图标不显示.md）。
-
-    /// 装好一次性的观察者与心跳，并启动时清理 + 校验梯。
-    /// 控制器整个应用生命周期只建一次（bootstrap 里有判重），无需幂等标志。
-    private func startSelfHealing() {
-        // 登录自启时菜单栏服务未必已经就绪，隔着几档复查有没有真的拿到槽位
-        for delay in Self.launchProbeLadder {
-            scheduleHealthCheck(delay: delay, reason: "launch+\(Int(delay))s", coalescing: false)
-        }
-
-        // 与悬停轮询定时器同样注册到 .common mode，事件跟踪期间不被挂起。
-        // 掉线期间的快探测由 runHealthCheck 自调度，这条只是低频保底闹钟。
-        let heartbeat = Timer(timeInterval: Self.heartbeatInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.runHealthCheck(reason: "heartbeat") }
-        }
-        RunLoop.main.add(heartbeat, forMode: .common)
-        heartbeatTimer = heartbeat
-
-        let workspaceCenter = NSWorkspace.shared.notificationCenter
-        // 用户多半正在系统设置里开关那一行。激活时复查是为了"放行后立刻恢复"，
-        // 失活时复查是因为**开关是在系统设置已经在前台时点的**，那一下不产生任何激活事件 ——
-        // 只盯激活的话，状态变化要等最长一整轮心跳才发现（真机实测等了 5 分钟）。
-        for name in [NSWorkspace.didActivateApplicationNotification,
-                     NSWorkspace.didDeactivateApplicationNotification] {
-            let observer = workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                guard app?.bundleIdentifier == "com.apple.systempreferences" else { return }
-                Task { @MainActor in self?.scheduleHealthCheck(delay: 2.0, reason: "settingsChanged") }
-            }
-            wakeObservers.append(observer)
-        }
-
-        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
-            let observer = workspaceCenter.addObserver(
-                forName: name, object: nil, queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    // 唤醒会连发两个通知，只清连续计数；重建预算不清零，免得反复唤醒把它刷空
-                    self.healing.resetDetachedRun()
-                    self.scheduleHealthCheck(delay: 2.0, reason: "wake")
-                }
-            }
-            wakeObservers.append(observer)
-        }
-    }
-
-    /// 显示器重配置 / 唤醒等通知会连发多次，健康检查合并到最后一次之后再跑。
-    /// - Parameter coalescing: 启动校验梯要的是"每一档都跑"，那里传 false 各自独立排期
-    private func scheduleHealthCheck(delay: TimeInterval, reason: String, coalescing: Bool = true) {
-        guard coalescing else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.runHealthCheck(reason: reason)
-            }
-            return
-        }
-        healthCheckWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            self?.runHealthCheck(reason: reason)
-        }
-        healthCheckWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
-    }
-
-    private func runHealthCheck(reason: String) {
-        // 用户在设置里关掉了菜单栏项：没有状态项是预期状态，不是故障
-        guard model.displayMode.showsMenuBarItem else { return }
-        // 误判闸门：面板开着、或鼠标按着（可能正在拖图标），这时的几何都不作数
-        guard !popover.isShown, NSEvent.pressedMouseButtons == 0 else {
-            scheduleHealthCheck(delay: 5, reason: "deferred-\(reason)")
-            return
-        }
-        if let until = screenReconfigureUntil, Date() < until {
-            scheduleHealthCheck(delay: Self.probeInterval, reason: "reconfiguring-\(reason)")
-            return
-        }
-        screenReconfigureUntil = nil
-
-        let snapshot = statusItemSnapshot()
-        let verdict = StatusItemHealth.evaluate(snapshot)
-        logStatusItemState(reason: reason, snapshot: snapshot, verdict: verdict)
-
-        switch healing.advance(verdict: verdict, now: Date()) {
-        case .none:
-            // 健康时顺手做一次内容幂等重刷 + 轻推布局：
-            // 它治的是"位置还在、图标不画了"那种托管渲染丢失
-            if case .healthy = verdict { nudgeStatusItemLayout() }
-
-        case .probe(let seconds):
-            scheduleHealthCheck(delay: max(seconds, Self.probeInterval), reason: "probe-\(reason)")
-
-        case .forceVisibleOnce:
-            statusItem?.isVisible = true
-            Log.menubar.error("状态项 isVisible=false（疑似被拖出菜单栏），一次性尝试恢复可见后不再干预")
-
-        case .rebuild(let clearAutosave):
-            performRebuild(reason: verdict.logDescription, clearAutosaveState: clearAutosave)
-
-        case .declareBlocked:
-            enterBlockedBySystem()
-
-        case .recovered:
-            exitBlockedBySystem()
-
-        case .giveUp:
-            Log.menubar.error(
-                "状态项结构性重建预算耗尽（\(self.healing.attempts, privacy: .public) 次），停止重建，心跳继续")
-        }
-    }
-
-    /// 确认被 ControlCenter 拉黑：重建治不好（每个新 PID 照样秒拒），停手并把用户
-    /// 引到系统设置去放行。放行是秒生效的，随后的复查会自动转回健康。
-    private func enterBlockedBySystem() {
-        Log.menubar.error(
-            """
-            状态项被 ControlCenter 拉黑隐藏：重建无效，已停止重建。\
-            请到「系统设置 › 控制中心 › 菜单栏 › 应用程序」把本应用那一行打开；\
-            若本进程是从 IDE 的集成终端启动的，要打开的是那个 IDE 那一行。
-            """)
-        model.setMenuBarBlockedBySystem(true)
-
-        // 没有 Dock 图标时，用户连个能看到横幅的窗口都打不开 —— 给他顶一次主窗口。
-        // 每次运行只顶一次，免得放行前的每轮复查都把窗口怼到他脸上。
-        if !model.displayMode.showsDockIcon, !didPresentBlockedFallback {
-            didPresentBlockedFallback = true
-            presentFallbackWindow?()
-        }
-    }
-
-    private func exitBlockedBySystem() {
-        Log.menubar.notice("菜单栏拉黑已解除，状态项恢复渲染")
-        model.setMenuBarBlockedBySystem(false)
-        didPresentBlockedFallback = false
-    }
-
-    private func performRebuild(reason: String, clearAutosaveState: Bool) {
-        // 弹窗锚定在独立的 anchor 窗口上，换状态项不影响它，但重建后坐标必然过期，先收起
-        if popover.isShown { hide() }
-
-        if clearAutosaveState {
-            // 持久化位置被写坏时，带 autosaveName 重建会把坏状态一并还原回来
-            let defaults = UserDefaults.standard
-            defaults.removeObject(forKey: "NSStatusItem Preferred Position \(Self.autosaveName)")
-            defaults.removeObject(forKey: "NSStatusItem Visible \(Self.autosaveName)")
-            Log.menubar.error("已清除状态项持久化位置键：autosave=\(Self.autosaveName, privacy: .public)")
-        }
-
-        removeStatusItem()
-        install()
-        updateButton()
-        // 换了新窗口：旧窗口"frame 已过期"的结论对它不适用，作废重新观察。
-        // 反过来把它标成过期是错的 —— 那会让镜像信号一直返回 nil，拉黑就再也测不出来了。
-        lastFrameStaleAt = nil
-        lastFrameTrustedAt = nil
-
-        // 重建的记账（次数、时刻、连续计数清零）在 SelfHealingMachine 里，这里只管执行
-        Log.menubar.error(
-            """
-            状态项重建：原因=\(reason, privacy: .public) \
-            结构性=\(self.healing.attempts, privacy: .public)次 \
-            镜像=\(self.healing.mirrorRebuilds, privacy: .public)次 \
-            clearAutosave=\(clearAutosaveState, privacy: .public)
-            """)
-        // 3 秒而不是 1.5：新状态项窗口要等 AppKit 布局才拿到坐标，
-        // 查得太早会看到 (0, -h) 的未布局形态，把健康的重建误判成没拿到槽位
-        scheduleHealthCheck(delay: 3.0, reason: "post-rebuild")
-    }
-
-    private func statusItemSnapshot() -> StatusItemHealth.Snapshot {
-        let screens = NSScreen.screens.map {
-            StatusItemHealth.ScreenGeometry(frame: $0.frame, visibleFrame: $0.visibleFrame)
-        }
-        let button = statusItem?.button
-        let window = button?.window
-        return StatusItemHealth.Snapshot(
-            hasItem: statusItem != nil,
-            hasButton: button != nil,
-            isVisible: statusItem?.isVisible ?? false,
-            buttonWidth: button?.bounds.width ?? 0,
-            windowFrame: window?.frame,
-            windowNumber: window?.windowNumber,
-            registeredInWindowServer: window.flatMap { windowIsRegistered($0) },
-            mirroredByMenuBarHost: sampleMenuBarMirror(),
-            screens: screens
-        )
-    }
-
-    /// 采样 layer-25 的控制中心窗口，交给 `MenuBarMirror` 判定有没有我们的镜像。
-    /// 查询失败或 frame 不新鲜时返回 nil，让该信号被忽略（见 `MenuBarMirror.isMirrored`）。
-    private func sampleMenuBarMirror() -> Bool? {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
-        else { return nil }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let windows: [MenuBarMirror.Window] = list.compactMap { info in
-            guard let layer = info[kCGWindowLayer as String] as? Int,
-                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = bounds["X"], let y = bounds["Y"],
-                  let width = bounds["Width"], let height = bounds["Height"]
-            else { return nil }
-            // kCGWindowBounds 是 CG 翻转坐标，只用 X/Width/Height 做匹配，与判定里一致
-            return MenuBarMirror.Window(
-                layer: layer,
-                isOwnProcess: (info[kCGWindowOwnerPID as String] as? Int32) == ownPID,
-                bounds: CGRect(x: x, y: y, width: width, height: height)
-            )
-        }
-        return MenuBarMirror.isMirrored(
-            windows: windows,
-            itemFrame: statusItem?.button?.window?.frame,
-            frameIsTrustworthy: statusItemFrameIsTrustworthy
-        )
-    }
-
-    /// 按钮窗口 frame 此刻可不可信 —— 只服务于"纯几何的镜像匹配"这一个用途。
-    ///
-    /// 托管状态项的窗口坐标会停在旧值不更新（见 `resolveItemRect`），拿过期坐标比几何
-    /// 必然对不上，会把健康的状态项误判成 notMirrored，进而误报"被系统拉黑"。
-    private var statusItemFrameIsTrustworthy: Bool {
-        // 1. 显示器刚重配置：runHealthCheck 已整轮跳过，这里是第二道闸
-        if let until = screenReconfigureUntil, Date() < until { return false }
-        // 2. 最近被判过过期，且此后没有再被判可信
-        if let stale = lastFrameStaleAt,
-           Date().timeIntervalSince(stale) < Self.frameStaleWindow,
-           (lastFrameTrustedAt.map { $0 < stale } ?? true) {
-            return false
-        }
-        // 刻意**不**把"frame 落在所有屏幕之外"算作不可信：那不是坐标过期，
-        // 而是状态项压根没拿到菜单栏槽位（拉黑的直接表现），由 evaluate 判成 notMirrored。
-        // 放在这里会把唯一能识别拉黑的信号永久作废 —— 真机上踩过。
-        return true
-    }
-
-    /// 按窗口号反查 CGWindowList。
-    ///
-    /// 只查自己的窗口号、只读 bounds（`kCGWindowName` 才需要屏幕录制权限），查不了就返回 nil
-    /// 让这个信号被忽略。**绝不能看 `kCGWindowIsOnscreen`** —— macOS 26 上健康的第三方状态项
-    /// 自己的窗口也是 offscreen，真正上屏的是控制中心的镜像窗口。
-    private func windowIsRegistered(_ window: NSWindow) -> Bool? {
-        guard window.windowNumber > 0 else { return false }
-        // macOS 26 上状态项窗口托管在系统进程，本进程拿到的 windowNumber 是个超出
-        // CGWindowID(UInt32) 范围的占位值（实测健康状态项为 4294967296 = 2^32）。
-        // 这种窗口号查不了窗口服务器，返回 nil 让该信号被忽略 ——
-        // 当成 false 会把健康的状态项判成掉线、反复重建。
-        guard window.windowNumber <= Int(UInt32.max) else { return nil }
-
-        // 全量枚举再按窗口号过滤，而不是带 on-screen 语义的查询：
-        // 状态项窗口本身是离屏的，只有控制中心的镜像窗口才上屏。
-        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
-        else { return nil }
-
-        for info in list {
-            guard let number = info[kCGWindowNumber as String] as? Int,
-                  number == window.windowNumber else { continue }
-            guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  let width = bounds["Width"], let height = bounds["Height"] else { return false }
-            return width > 0 && height > 0
-        }
-        return false
-    }
-
-    private static func describe(_ rect: NSRect?) -> String {
-        guard let rect else { return "nil" }
-        return String(format: "%.0f,%.0f %.0fx%.0f", rect.minX, rect.minY, rect.width, rect.height)
-    }
-
-    private func logStatusItemState(
-        reason: String,
-        snapshot: StatusItemHealth.Snapshot? = nil,
-        verdict: StatusItemHealth.Verdict? = nil
-    ) {
-        let snapshot = snapshot ?? statusItemSnapshot()
-        let verdict = verdict ?? StatusItemHealth.evaluate(snapshot)
-        let registered = snapshot.registeredInWindowServer.map(String.init(describing:)) ?? "?"
-        let mirrored = snapshot.mirroredByMenuBarHost.map(String.init(describing:)) ?? "?"
-        // 普通字符串拼接不能用 privacy: 插值（那是 OSLogMessage 字面量专属），
-        // 先拼好整行再整体以 public 传给 Logger。内容全是非敏感的诊断值。
-        let line = """
-        状态项[\(reason)] verdict=\(verdict.logDescription) \
-        visible=\(snapshot.isVisible) btnW=\(Int(snapshot.buttonWidth)) win=\(Self.describe(snapshot.windowFrame)) \
-        winNum=\(snapshot.windowNumber ?? -1) mirror=\(mirrored) reg=\(registered) frameOK=\(self.statusItemFrameIsTrustworthy) \
-        screens=\(snapshot.screens.count) state=\(self.healing.state.logDescription) \
-        rebuilds=\(self.healing.attempts) mirrorRebuilds=\(self.healing.mirrorRebuilds)
-        """
-        if case .healthy = verdict {
-            Log.menubar.info("\(line, privacy: .public)")
-        } else {
-            Log.menubar.error("\(line, privacy: .public)")
-        }
-    }
-
-    /// 幂等重刷按钮内容，再用"定长 → 变长"轻推状态项，迫使 NSStatusBar 重新布局并同步
-    /// 托管窗口 frame。净宽度不变，不产生可见跳动。
-    ///
-    /// 它治的只是"位置还在、图标不画了"的托管渲染丢失；状态项压根没拿到菜单栏槽位
-    /// （被拉黑）时轻推无效，那种故障归 `performRebuild` / `blockedBySystem` 管。
-    private func nudgeStatusItemLayout() {
-        guard let item = statusItem, !popover.isShown else { return }
-        updateButton()
-        item.length = NSStatusItem.squareLength
-        item.length = NSStatusItem.variableLength
     }
 }

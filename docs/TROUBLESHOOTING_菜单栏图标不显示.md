@@ -159,32 +159,13 @@ open -a VPSQuota
 所以不会撞上 `userHidden` 分支（那条是用户 Cmd 拖走图标才会走的）。
 两种场景的表现完全一致：14 秒判定、只重建 1 次、frame 同样变成 `0,-22`。
 
-## 六、应用内自愈机制（代码指引）
+## 六、应用内状态项管理设计
 
-- 判定：`macos/Sources/VPSQuotaCore/MenuBar/MenuBarMirror.swift`（镜像匹配）
-  + `StatusItemHealth.swift`（verdict 与退避策略、`SelfHealingMachine` 编排），均有单测。
-- 采样与接线：`macos/Sources/VPSQuota/UI/StatusItemController.swift` 文末「状态项健康自愈」一节。
-- 告知 UI：`macos/Sources/VPSQuota/UI/MenuBarBlockedBanner.swift`，挂在主窗口与设置界面。
+为避免轮询采样带来性能损耗以及外接屏切换/休眠唤醒时的假阳性误判重建（导致图标闪烁跳动），应用已移除自动检测看门狗与 UI 警告横幅，全面回归标准 AppKit 生命周期管理：
 
-要点：
-
-- **健康判据优先级**（`StatusItemHealth.evaluate`，顺序不可调）：
-  `isVisible`（用户意图）→ 存在性/几何 → **镜像信号**（`mirror=false` → `notMirrored`）
-  → 窗口服务器注册。信号查不到（nil）时忽略该信号，绝不因查不到判掉线。
-- **镜像匹配只用几何**，刻意不读 `kCGWindowName`（那要屏幕录制权限，一个流量工具不该要）。
-  代价是 frame 过期会误判，所以 frame 不新鲜时（`statusItemFrameIsTrustworthy`：屏幕刚重配置 /
-  `resolveItemRect` 近期判过过期 / frame 落在所有屏幕之外）镜像信号直接作废返回 nil。
-- **处置分两类**（`SelfHealingMachine.advance`）：
-  - `notMirrored`：确认 2 次 → 重建 1 次 → 重新确认 2 次仍无镜像 → `blockedBySystem` 终态，
-    **停止重建**、error 日志 + 横幅，只留 60 秒复查。用户放行后自动转 healthy、横幅消失。
-  - 结构性掉线（对象没了、几何跑飞）：重建仍是唯一手段，走原来的退避梯
-    （连续 2 次确认、30/60 秒指数退避、预算 3 次、最后一次先清 autosave 持久化键），
-    耗尽后 `giveUp`（停重建、心跳继续），不等于被拉黑。
-- **探测节奏**：启动校验梯 `launch+2s/5s/15s/60s`，5 分钟心跳，显示器重配置/唤醒后复查，
-  系统设置**激活与失活**时各复查一次；面板开着或鼠标按着时跳过（几何不作数）。
-  失活那次不能省：开关是在系统设置已经在前台时点的，那一下不产生任何激活事件，
-  只盯激活的话状态变化要等最长一整轮心跳（真机上等了 5 分钟）。有它才是 ~1 秒响应。
-- 没有 Dock 图标时，进入拉黑终态会把主窗口顶出来一次 —— 否则用户没有任何能看到横幅的入口。
+- **生命周期**：由 `StatusItemController` 常驻持有 `NSStatusItem` 引用。除非用户在「呈现方式」设置中关闭菜单栏项，否则状态项保持常驻。
+- **纯净界面**：不再常驻扫描窗口镜像，不再弹出「菜单栏图标被系统隐藏」横幅或强制弹窗，保持界面安静纯粹。
+- **系统放行**：如遇 macOS 控制中心按进程拉黑，请按上方第二节步骤在系统设置中直接放行即可。
 
 ## 七、手动排查手册
 
