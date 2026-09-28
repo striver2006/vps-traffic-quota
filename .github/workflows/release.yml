@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS · 编译与签名打包
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 工具链版本
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: 安装 pandoc（用于生成带样式的 HTML 文档）
+        run: brew install pandoc || true
+
+      - name: 导入 Apple Developer ID 证书到临时钥匙串
+        if: ${{ env.BUILD_CERTIFICATE_BASE64 != '' }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD || 'vpsquota-ci-temp' }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERT_PATH
+          security import $CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain-db -d user -s $KEYCHAIN_PATH $(security list-keychain-db -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: 编译全部 target
+        run: swift build
+
+      - name: 单元测试
+        run: swift test
+
+      - name: 组装与签名 Universal .app 与 .dmg
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_IDENTITY || 'Developer ID Application' }}
+        run: ./scripts/build-app.sh release
+
+      - name: 校验 bundle 与架构
+        run: |
+          test -x build/VPSQuota.app/Contents/MacOS/VPSQuota
+          test -f build/VPSQuota.app/Contents/Resources/VPSQuota.icns
+          test -f build/VPSQuota.dmg
+          file build/VPSQuota.app/Contents/MacOS/VPSQuota | grep 'x86_64'
+          file build/VPSQuota.app/Contents/MacOS/VPSQuota | grep 'arm64'
+          plutil -lint build/VPSQuota.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 build/VPSQuota.app
+
+      - name: 准备打包资产
+        run: |
+          cp build/VPSQuota.dmg build/VPSQuota-macos.dmg
+          ditto -c -k --keepParent build/VPSQuota.app build/VPSQuota-macos.zip
+
+      - name: 上传 macOS 资产
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-release-assets
+          path: |
+            macos/build/VPSQuota-macos.dmg
+            macos/build/VPSQuota-macos.zip
+          if-no-files-found: error
+          retention-days: 2
+
+  windows:
+    name: Windows · 构建与打包
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原依赖
+        run: dotnet restore VpsQuota.sln
+
+      - name: 编译（Release）
+        run: dotnet build VpsQuota.sln -c Release --no-restore
+
+      - name: 单元测试
+        run: dotnet test VpsQuota.sln -c Release --no-build
+
+      - name: 安装 Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: 编译双架构（win-x64 / win-arm64）与制作安装包
+        run: ./build-installer.ps1 -Arch all
+
+      - name: 上传 Windows 资产
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release-assets
+          path: windows/dist/*
+          if-no-files-found: error
+          retention-days: 2
+
+  publish:
+    name: 发布 GitHub Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 下载 macOS 资产
+        uses: actions/download-artifact@v7
+        with:
+          name: macos-release-assets
+          path: release-assets
+
+      - name: 下载 Windows 资产
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-release-assets
+          path: release-assets
+
+      - name: 检查下载的资产
+        run: ls -lh release-assets
+
+      - name: 生成 Release 说明
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          cat << 'EOF' > release_notes.md
+### 📦 安装包与分发说明
+
+- **macOS**：
+  - `VPSQuota-macos.dmg`：Universal 2 通用二进制安装包（原生支持 Apple Silicon 与 Intel 双架构），内置 `/Applications` 快捷替身，拖拽即可安装。
+  - `VPSQuota-macos.zip`：便携版 zip 包。
+
+- **Windows**：
+  - `VPSQuota-Setup-win-x64.exe`：Intel / AMD 64位 Windows 安装包，自包含 .NET 8 运行时，无需单独安装依赖，免管理员提权（安装至用户目录）。
+  - `VPSQuota-Setup-win-arm64.exe`：ARM64 架构原生安装包（支持 Surface Pro、骁龙 X Elite 等 Windows on ARM 设备）。
+  - `VPSQuota-win-x64.zip` / `VPSQuota-win-arm64.zip`：便携绿色解压即用包。
+
+---
+
+EOF
+
+          python3 -c "
+          import os, re
+          tag = '$VERSION'
+          if os.path.exists('CHANGELOG.md'):
+              with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+                  content = f.read()
+              pattern = r'## \[' + re.escape(tag) + r'\].*?\n(.*?)(?=\n## \[|\Z)'
+              match = re.search(pattern, content, re.DOTALL)
+              if match:
+                  with open('release_notes.md', 'a', encoding='utf-8') as out:
+                      out.write(match.group(1).strip() + '\n')
+          "
+
+      - name: 创建 GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release_notes.md \
+            release-assets/*
