@@ -4,6 +4,14 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.4] - 2026-09-29
+
+### 优化与自动化
+
+- **自动化云端发布**：
+  - 新增 GitHub Actions 全自动发布流水线（`release.yml`），打 tag 推送即自动完成 macOS（Apple Developer ID 签名 Universal DMG/ZIP）与 Windows（Inno Setup 安装包与绿色包）的编译、签名与 GitHub Release 正式发布。
+  - 增加一键配置脚本 `setup-ci-secrets.sh`，提升安全与维护效率。
+
 ## [1.0.3] - 2026-09-28
 
 ### 优化与改进
@@ -79,6 +87,7 @@
 - vnstat 按服务器本地时区切分自然日，本工具按 UTC 记账，非 UTC 服务器有数小时偏差
 - Windows 端的 DPAPI 密文换机器或换用户后无法解开，需重新填写 API Key
 
+[1.0.4]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.4
 [1.0.3]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.3
 [1.0.2]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.2
 [1.0.1]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.1
