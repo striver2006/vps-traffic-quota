@@ -1,6 +1,6 @@
 name: Release
 
-on:
+'on':
   push:
     tags:
       - 'v*'
@@ -31,11 +31,11 @@ jobs:
         run: brew install pandoc || true
 
       - name: 导入 Apple Developer ID 证书到临时钥匙串
-        if: ${{ env.BUILD_CERTIFICATE_BASE64 != '' }}
+        if: secrets.MACOS_CERTIFICATE != ''
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
           P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD || 'vpsquota-ci-temp' }}
+          KEYCHAIN_PASSWORD: vpsquota-ci-temp
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
@@ -56,8 +56,12 @@ jobs:
 
       - name: 组装与签名 Universal .app 与 .dmg
         env:
-          CODESIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_IDENTITY || 'Developer ID Application' }}
-        run: ./scripts/build-app.sh release
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_IDENTITY }}
+        run: |
+          if [ -z "$CODESIGN_IDENTITY" ]; then
+            export CODESIGN_IDENTITY="Developer ID Application"
+          fi
+          ./scripts/build-app.sh release
 
       - name: 校验 bundle 与架构
         run: |
@@ -144,38 +148,7 @@ jobs:
         run: ls -lh release-assets
 
       - name: 生成 Release 说明
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-
-          cat << 'EOF' > release_notes.md
-### 📦 安装包与分发说明
-
-- **macOS**：
-  - `VPSQuota-macos.dmg`：Universal 2 通用二进制安装包（原生支持 Apple Silicon 与 Intel 双架构），内置 `/Applications` 快捷替身，拖拽即可安装。
-  - `VPSQuota-macos.zip`：便携版 zip 包。
-
-- **Windows**：
-  - `VPSQuota-Setup-win-x64.exe`：Intel / AMD 64位 Windows 安装包，自包含 .NET 8 运行时，无需单独安装依赖，免管理员提权（安装至用户目录）。
-  - `VPSQuota-Setup-win-arm64.exe`：ARM64 架构原生安装包（支持 Surface Pro、骁龙 X Elite 等 Windows on ARM 设备）。
-  - `VPSQuota-win-x64.zip` / `VPSQuota-win-arm64.zip`：便携绿色解压即用包。
-
----
-
-EOF
-
-          python3 -c "
-          import os, re
-          tag = '$VERSION'
-          if os.path.exists('CHANGELOG.md'):
-              with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
-                  content = f.read()
-              pattern = r'## \[' + re.escape(tag) + r'\].*?\n(.*?)(?=\n## \[|\Z)'
-              match = re.search(pattern, content, re.DOTALL)
-              if match:
-                  with open('release_notes.md', 'a', encoding='utf-8') as out:
-                      out.write(match.group(1).strip() + '\n')
-          "
+        run: python3 macos/scripts/generate-release-notes.py "${GITHUB_REF_NAME}" > release_notes.md
 
       - name: 创建 GitHub Release
         env:
