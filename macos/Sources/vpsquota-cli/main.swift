@@ -41,7 +41,7 @@ func renderStatus(_ s: ServerStatus) -> String {
     var line = """
       \(s.server.name)  [\(s.server.provider.displayName) / \(s.server.meterMode.displayName)]
         \(usage)
-        已用 \(ByteFormat.gb(s.usedGB)) / \(quotaText)   账期 \(s.period.startDay) → \(s.period.endDayExclusive)（剩 \(s.remainingDays) 天）
+        已用 \(ByteFormat.gb(s.usedGB)) / \(quotaText)   账期 (UTC) \(s.period.startDay) → \(s.period.endDayExclusive)（剩 \(s.remainingDays) 天）
     """
 
     if let projected = s.projectedGB {

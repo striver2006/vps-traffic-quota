@@ -72,7 +72,7 @@ public partial class MainWindow : Window
             : "／ 配额未知";
 
         DetailPeriod.Text =
-            $"账期 {status.Period.StartDay} → {status.Period.EndDayExclusive}　剩 {status.RemainingDays} 天" +
+            $"账期 (UTC) {status.Period.StartDay} → {status.Period.EndDayExclusive}　剩 {status.RemainingDays} 天" +
             (status.RemainingGB is { } remaining ? $"　剩余流量 {ByteFormat.GB(remaining)}" : "");
 
         if (status.ProjectedGB is { } projected)

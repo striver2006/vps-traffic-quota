@@ -149,7 +149,7 @@ public sealed class SshVnstatCollector : ICollector
         if (offsetText.Length > 0 && offsetText != "+0000")
         {
             warnings.Add(
-                $"服务器时区为 UTC{offsetText}，vnstat 的日切分与本应用的 UTC 记账存在数小时偏差。" +
+                $"服务器时区为 UTC{offsetText}，vnstat 的日切分与本应用的 UTC 记账存在数小时偏差（仅略微影响首末两天的归属，不影响月度总量监控）。" +
                 "如需完全对齐，可在服务器上执行 timedatectl set-timezone UTC。");
         }
 

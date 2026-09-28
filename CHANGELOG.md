@@ -4,6 +4,15 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.3] - 2026-09-28
+
+### 优化与改进
+
+- **时区与日期口径展示明确化**：
+  - 详情界面与 CLI 明确标注账期为 `(UTC)`，图表标题标注为 `每日用量 (UTC)`，消除多时区使用者的时区困惑。
+  - **macOS**：修正 Swift Charts 图表组件在客户端本地日历下的渲染对齐偏差，显式绑定 UTC 日历与 UTC 时区环境，确保每日用量柱与 X 轴刻度严格按 UTC 零点绘制对齐。
+  - **SSH/vnstat 采集**：优化服务器时区偏差警告文案，明确指出时区不一致仅轻微影响账期首尾两天的归属，不影响月度总量监控。
+
 ## [1.0.2] - 2026-09-17
 
 ### 优化与重构
@@ -70,6 +79,7 @@
 - vnstat 按服务器本地时区切分自然日，本工具按 UTC 记账，非 UTC 服务器有数小时偏差
 - Windows 端的 DPAPI 密文换机器或换用户后无法解开，需重新填写 API Key
 
+[1.0.3]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.3
 [1.0.2]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.2
 [1.0.1]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.1
 [1.0.0]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.0

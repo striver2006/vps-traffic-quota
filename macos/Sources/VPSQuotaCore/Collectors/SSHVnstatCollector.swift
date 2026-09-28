@@ -126,7 +126,7 @@ public struct SSHVnstatCollector: Collector {
         // 时区不是 UTC 时，账期首尾两天会有几小时的归属偏差 —— 量不大，但要说清楚。
         if !offsetText.isEmpty, offsetText != "+0000" {
             warnings.append(
-                "服务器时区为 UTC\(offsetText)，vnstat 的日切分与本应用的 UTC 记账存在数小时偏差。"
+                "服务器时区为 UTC\(offsetText)，vnstat 的日切分与本应用的 UTC 记账存在数小时偏差（仅略微影响首末两天的归属，不影响月度总量监控）。"
                 + "如需完全对齐，可在服务器上执行 timedatectl set-timezone UTC。"
             )
         }

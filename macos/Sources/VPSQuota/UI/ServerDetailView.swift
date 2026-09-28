@@ -51,7 +51,7 @@ struct ServerDetailContent: View {
             )
 
             HStack(spacing: 22) {
-                metric("账期", "\(status.period.startDay) → \(status.period.endDayExclusive)")
+                metric("账期 (UTC)", "\(status.period.startDay) → \(status.period.endDayExclusive)")
                 metric("剩余", "\(status.remainingDays) 天")
                 if let remaining = status.remainingGB {
                     metric("剩余流量", ByteFormat.gb(remaining))
@@ -139,12 +139,12 @@ struct ServerDetailContent: View {
             .frame(maxHeight: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 14) {
-                Text("每日用量")
+                Text("每日用量 (UTC)")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                 Chart(data) { point in
                     BarMark(
-                        x: .value("日期", point.date, unit: .day),
+                        x: .value("日期", point.date, unit: .day, calendar: UTCDay.calendar),
                         y: .value("用量", point.dailyGB)
                     )
                     .foregroundStyle(status.severity.color.opacity(0.75))
@@ -159,20 +159,20 @@ struct ServerDetailContent: View {
                 Chart {
                     ForEach(data) { point in
                         LineMark(
-                            x: .value("日期", point.date, unit: .day),
+                            x: .value("日期", point.date, unit: .day, calendar: UTCDay.calendar),
                             y: .value("累计", point.cumulativeGB)
                         )
                         .foregroundStyle(status.severity.color)
                         // 只有一天数据时画不出线段，补一个点，否则整张图看着是空的。
                         if data.count == 1 {
                             PointMark(
-                                x: .value("日期", point.date, unit: .day),
+                                x: .value("日期", point.date, unit: .day, calendar: UTCDay.calendar),
                                 y: .value("累计", point.cumulativeGB)
                             )
                             .foregroundStyle(status.severity.color)
                         }
                         AreaMark(
-                            x: .value("日期", point.date, unit: .day),
+                            x: .value("日期", point.date, unit: .day, calendar: UTCDay.calendar),
                             y: .value("累计", point.cumulativeGB)
                         )
                         .foregroundStyle(status.severity.color.opacity(0.12))
@@ -193,6 +193,8 @@ struct ServerDetailContent: View {
                 .chartYAxisLabel("GB")
                 .frame(height: 150)
             }
+            .environment(\.calendar, UTCDay.calendar)
+            .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
         }
     }
 }
