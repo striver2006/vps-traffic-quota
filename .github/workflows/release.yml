@@ -1,6 +1,6 @@
 name: Release
 
-'on':
+on:
   push:
     tags:
       - 'v*'
@@ -31,12 +31,15 @@ jobs:
         run: brew install pandoc || true
 
       - name: 导入 Apple Developer ID 证书到临时钥匙串
-        if: secrets.MACOS_CERTIFICATE != ''
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
           P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           KEYCHAIN_PASSWORD: vpsquota-ci-temp
         run: |
+          if [ -z "$BUILD_CERTIFICATE_BASE64" ]; then
+            echo "未配置 Apple Developer ID 证书密钥（MACOS_CERTIFICATE 为空），跳过证书导入并回退至 ad-hoc 签名"
+            exit 0
+          fi
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
@@ -150,11 +153,18 @@ jobs:
       - name: 生成 Release 说明
         run: python3 macos/scripts/generate-release-notes.py "${GITHUB_REF_NAME}" > release_notes.md
 
-      - name: 创建 GitHub Release
+      - name: 创建或更新 GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file release_notes.md \
-            release-assets/*
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} 已经存在，更新说明与资产"
+            gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file release_notes.md
+            gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
+          else
+            echo "创建新 Release ${GITHUB_REF_NAME}"
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file release_notes.md \
+              release-assets/*
+          fi
