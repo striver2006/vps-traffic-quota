@@ -4,6 +4,14 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.5] - 2026-09-30
+
+### 修复
+
+- **macOS：修复开机自启时未启动与常驻项丢失问题**：
+  - 根本原因：开机作为系统登录项拉起时，macOS 会对 `LSUIElement` / 登录项应用抑制初始主窗口渲染，而旧逻辑将状态栏菜单项装配（`StatusItemController`）与后台监控采集（`model.start()`）寄宿在 `MainWindowView.onAppear` 回调中，导致进程随登录项启动后沦为无菜单项、无后台轮询的“假死”状态。
+  - 解决方案：将菜单栏状态项装配、呈现模式设置与后台监控启动前移至 `AppDelegate.applicationDidFinishLaunching(_:)` 中无条件执行，彻底解耦常驻服务生命周期与窗口渲染生命周期。
+
 ## [1.0.4] - 2026-09-29
 
 ### 优化与自动化
@@ -87,6 +95,7 @@
 - vnstat 按服务器本地时区切分自然日，本工具按 UTC 记账，非 UTC 服务器有数小时偏差
 - Windows 端的 DPAPI 密文换机器或换用户后无法解开，需重新填写 API Key
 
+[1.0.5]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.5
 [1.0.4]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.4
 [1.0.3]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.3
 [1.0.2]: https://github.com/striver2006/vps-traffic-quota/releases/tag/v1.0.2

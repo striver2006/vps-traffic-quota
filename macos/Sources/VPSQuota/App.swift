@@ -14,7 +14,10 @@ enum WindowID {
 /// `open -a VPSQuota`，系统发的都是 reopen 事件而不是重新启动。
 /// 不处理它的话，一个没有可见窗口的菜单栏应用会毫无反应 ——
 /// 而当菜单栏图标被刘海挤掉时，这恰恰是唯一的入口。
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let model = AppModel()
+
     /// 由 `VPSQuotaApp` 在启动时注入，用于打开主窗口。
     var openMainWindow: (() -> Void)?
 
@@ -28,19 +31,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var launchedAtLogin = false
 
     /// 开机自启时不要把主窗口糊到用户脸上 —— 登录那一刻他要的是它安静地待在菜单栏里。
-    ///
-    /// 主窗口的 Window 场景刻意没有 `.defaultLaunchBehavior(.suppressed)`
-    /// （见下面 `Window` 的注释：它是 bootstrap 唯一保证跑到的地方），
-    /// 所以只能在启动后把它关掉，而不是一开始就不建。
     func applicationDidFinishLaunching(_ notification: Notification) {
         let isDefaultLaunch =
             notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
         launchedAtLogin = !isDefaultLaunch
-        guard launchedAtLogin else { return }
 
-        // 这个回调与主窗口的 onAppear 谁先谁后并无保证：
-        // 窗口已经建出来了就由这里关掉，还没建出来则由 bootstrap() 读 launchedAtLogin 处理。
-        DispatchQueue.main.async { [weak self] in self?.closeMainWindow?() }
+        // 无论何种方式启动（开机自启、双击、命令行），常驻生命周期都在这里完成装配：
+        // 1. 设置应用激活策略（是否显示 Dock 图标）
+        model.applyActivationPolicy()
+
+        // 2. 状态项常驻菜单栏
+        if statusItem == nil {
+            statusItem = StatusItemController(model: model)
+        }
+
+        // 3. 启动后台监控与数据轮询
+        Task { await model.start() }
+
+        // 4. 开机自启时不要把主窗口糊到用户脸上：如果窗口被建出来了就由这里关掉
+        if launchedAtLogin {
+            DispatchQueue.main.async { [weak self] in self?.closeMainWindow?() }
+        }
     }
 
     func applicationShouldHandleReopen(
@@ -54,16 +65,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct VPSQuotaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
 
     @Environment(\.openWindow) private var openWindowFromEnvironment
     @Environment(\.dismissWindow) private var dismissWindowFromEnvironment
 
     var body: some Scene {
+        let _ = configureDelegates()
+
         Window("VPS 流量", id: WindowID.main) {
             MainWindowView()
-                .environment(model)
-                .onAppear { bootstrap() }
+                .environment(appDelegate.model)
+                .onAppear {
+                    if appDelegate.launchedAtLogin {
+                        dismissWindowFromEnvironment(id: WindowID.main)
+                    }
+                }
         }
         .defaultSize(width: 900, height: 600)
         .commands {
@@ -99,30 +115,25 @@ struct VPSQuotaApp: App {
         }
 
         // 菜单栏项不在这里声明：它需要响应鼠标悬停，而 MenuBarExtra 只认点击。
-        // 见 StatusItemController —— 由 bootstrap() 装上。
+        // 见 StatusItemController —— 由 AppDelegate 在启动时装上。
 
         Window("设置", id: WindowID.settings) {
             SettingsView()
-                .environment(model)
+                .environment(appDelegate.model)
         }
         .windowResizability(.contentSize)
         // SwiftUI 默认会在启动时把每个 Window 场景都建出来，
         // 设置窗口每次开机都自己弹出来显然不对，这里显式抑制。
-        // 主窗口则保持默认行为：它是菜单栏图标被挤掉时的兜底入口，
-        // 启动时出现一次也顺带保证了 bootstrap() 一定会跑到。
         .defaultLaunchBehavior(.suppressed)
 
         WindowGroup(id: WindowID.detail, for: String.self) { $serverId in
             ServerDetailView(serverId: serverId ?? "")
-                .environment(model)
+                .environment(appDelegate.model)
         }
         .windowResizability(.contentSize)
     }
 
-    /// 主窗口首次出现时接好 Dock / `open -a` 的重新打开路径，装上菜单栏项，并应用呈现方式。
-    private func bootstrap() {
-        model.applyActivationPolicy()
-
+    private func configureDelegates() {
         let open = openWindowFromEnvironment
         appDelegate.openMainWindow = {
             open(id: WindowID.main)
@@ -131,20 +142,5 @@ struct VPSQuotaApp: App {
 
         let dismiss = dismissWindowFromEnvironment
         appDelegate.closeMainWindow = { dismiss(id: WindowID.main) }
-        // 登录项拉起来的：装配已经做完了，主窗口收起来即可。
-        if appDelegate.launchedAtLogin { dismiss(id: WindowID.main) }
-
-        // 主窗口在启动时一定会被创建（设置窗口才是 suppressed 的），
-        // 所以这里也是唯一一处保证会执行到的装配点。
-        if appDelegate.statusItem == nil {
-            let controller = StatusItemController(model: model)
-            appDelegate.statusItem = controller
-        }
-
-        // 启动流程也放这里，而不是挂在某个视图的 .task 上。
-        // 挂在视图上时，菜单栏面板每悬停一次就重跑一次 start()：
-        // 既会重新采集一轮，又会把自动刷新的定时器一再重建、永远轮不到触发；
-        // 面板收起时那次被取消的采集还会被记成一条"失败"。model.start() 自身幂等。
-        Task { await model.start() }
     }
 }
