@@ -19,6 +19,10 @@ public sealed class TrafficMonitor
     private AppConfig _config;
     private string? _vultrApiKey;
 
+    /// <summary>搬瓦工的 API Key 按 VEID（即按服务器）发，这里存 serverId → key。</summary>
+    private IReadOnlyDictionary<string, string> _bwgApiKeys =
+        new Dictionary<string, string>();
+
     /// <summary>
     /// Vultr 报告的配额缓存。只在用户没手填配额时才有意义，
     /// 缓存它是为了让"离线读本地数据"这条路径也能显示出配额。
@@ -43,6 +47,9 @@ public sealed class TrafficMonitor
     public void UpdateConfig(AppConfig config) => _config = config;
 
     public void SetVultrApiKey(string? key) => _vultrApiKey = key;
+
+    public void SetBwgApiKeys(IReadOnlyDictionary<string, string>? keys) =>
+        _bwgApiKeys = keys ?? new Dictionary<string, string>();
 
     /// <summary>
     /// 并发采集所有服务器，落库后返回最新状态。
@@ -210,12 +217,26 @@ public sealed class TrafficMonitor
 
     private ICollector MakeCollector(
         ServerConfig server,
-        IReadOnlyDictionary<string, double>? quotaLookup = null) => server.Provider switch
+        IReadOnlyDictionary<string, double>? quotaLookup = null)
     {
-        ProviderKind.Vultr => string.IsNullOrEmpty(_vultrApiKey)
-            ? throw CollectException.Misconfigured("尚未设置 Vultr API Key，请在设置中填写")
-            : new VultrCollector(_vultrApiKey, quotaLookup: quotaLookup),
-        ProviderKind.Ssh => new SshVnstatCollector(),
-        _ => throw CollectException.Misconfigured($"未知的服务商类型：{server.Provider}"),
-    };
+        switch (server.Provider)
+        {
+            case ProviderKind.Vultr:
+                if (string.IsNullOrEmpty(_vultrApiKey))
+                    throw CollectException.Misconfigured("尚未设置 Vultr API Key，请在设置中填写");
+                return new VultrCollector(_vultrApiKey, quotaLookup: quotaLookup);
+
+            case ProviderKind.Ssh:
+                return new SshVnstatCollector();
+
+            case ProviderKind.Bwg:
+                var key = _bwgApiKeys.GetValueOrDefault(server.Id);
+                if (string.IsNullOrEmpty(key))
+                    throw CollectException.Misconfigured("尚未设置这台服务器的 KiwiVM API Key，请在服务器编辑页填写");
+                return new BwgCollector(key);
+
+            default:
+                throw CollectException.Misconfigured($"未知的服务商类型：{server.Provider}");
+        }
+    }
 }

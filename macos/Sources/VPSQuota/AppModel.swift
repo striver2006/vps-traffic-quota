@@ -51,6 +51,10 @@ final class AppModel {
     /// 仅用于设置界面回填，不写进配置文件。
     var vultrAPIKey: String = ""
 
+    /// 搬瓦工的 API Key 按服务器（VEID）发：serverId → key。
+    /// 同样只存钥匙串、不进配置文件；编辑界面直接改这份字典，保存时整体落盘。
+    var bwgAPIKeys: [String: String] = [:]
+
     /// 应用的呈现方式。改动立即生效并持久化。
     var displayMode: DisplayMode {
         didSet {
@@ -127,8 +131,10 @@ final class AppModel {
         // 钥匙串里那条真实的 Key 当成"用户清空了"而删掉 —— 且没有任何提示。
         do {
             self.vultrAPIKey = try KeychainStore.vultrAPIKey() ?? ""
+            self.bwgAPIKeys = (try KeychainStore.bwgAPIKeys()) ?? [:]
         } catch {
             self.vultrAPIKey = ""
+            self.bwgAPIKeys = [:]
             self.keychainUnavailable = true
         }
 
@@ -205,6 +211,7 @@ final class AppModel {
     func start() async {
         guard let monitor, !didStart else { return }
         didStart = true
+        await monitor.setBwgAPIKeys(bwgAPIKeys)
         statuses = await monitor.statuses()
         scheduleTimer()
         scheduleRolloverCheck()
@@ -253,13 +260,20 @@ final class AppModel {
         // 原文件读不出来时绝不落盘：一次写入就把用户还能抢救的配置盖掉了。
         guard !configLoadFailed else { return }
 
+        // 已删除服务器的 Key 不留在钥匙串里。以本次配置里的服务器为准整体重写。
+        let validIds = Set(config.servers.map(\.id))
+        let keysToSave = bwgAPIKeys.filter { validIds.contains($0.key) && !$0.value.isEmpty }
+
         do {
             try configStore.save(config)
 
             // 钥匙串读不出来、用户又没输入新 Key 时，跳过密钥写入。
-            // 否则空串会被当成"清空"，把钥匙串里那条真实的 Key 删掉。
+            // 否则空值会被当成"清空"，把钥匙串里那条真实的 Key 删掉。
             if !(keychainUnavailable && vultrAPIKey.isEmpty) {
                 try KeychainStore.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+            }
+            if !(keychainUnavailable && keysToSave.isEmpty) {
+                try KeychainStore.setBwgAPIKeys(keysToSave)
             }
         } catch {
             fatalError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -268,6 +282,7 @@ final class AppModel {
         Task {
             await monitor?.updateConfig(config)
             await monitor?.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+            await monitor?.setBwgAPIKeys(keysToSave)
             scheduleTimer()
             await refresh()
         }
@@ -277,8 +292,11 @@ final class AppModel {
     func testServer(_ server: ServerConfig) async -> String? {
         guard let monitor else { return "数据库未就绪" }
         // 测试用的是当前编辑中的凭据，先同步过去，否则测的还是旧 Key。
+        // 搬瓦工的 Key 属于被测的这台，只带它一条，避免旧值干扰。
         await monitor.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
+        await monitor.setBwgAPIKeys([server.id: bwgAPIKeys[server.id] ?? ""])
         let error = await monitor.refreshOne(server: server)
+        await monitor.setBwgAPIKeys(bwgAPIKeys)
         statuses = await monitor.statuses()
         return error
     }

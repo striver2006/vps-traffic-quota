@@ -19,6 +19,17 @@
       "unitBase": "binary"
     },
     {
+      "id": "bwg-lax",
+      "name": "搬瓦工 洛杉矶",
+      "provider": "bwg",
+      "//bwgVeid": "在 KiwiVM 面板（kiwivm.64clouds.com）左侧「KiwiVM API」一页。API Key 不写在这里：macOS 存钥匙串、Windows 存 DPAPI，都在设置界面按服务器填写。月配额与已用会自动乘 monthly_data_multiplier，与面板同口径。",
+      "bwgVeid": "把 KiwiVM 的 VEID 填在这里",
+      "quotaGB": 0,
+      "meterMode": "outbound",
+      "resetDay": 16,
+      "unitBase": "binary"
+    },
+    {
       "id": "dmit-lax",
       "name": "DMIT 洛杉矶",
       "provider": "ssh",

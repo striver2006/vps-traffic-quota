@@ -17,7 +17,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>VpsQuota</AssemblyName>
     <RootNamespace>VpsQuota</RootNamespace>
-    <Version>1.0.5</Version>
+    <Version>1.1.0</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -25,6 +25,11 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <!-- DPAPI（ProtectedData）在 .NET Core 之后不再内置于 BCL，需要这个包 -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 差值算法（Derive 等）是 internal 纯函数，测试程序集要能直接调 -->
+    <InternalsVisibleTo Include="VpsQuota.Tests" />
   </ItemGroup>
 
   <ItemGroup>

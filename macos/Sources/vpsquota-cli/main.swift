@@ -15,8 +15,9 @@ func printUsage() {
     用法：
       vpsquota-cli status              读取本地数据，显示各服务器当前账期用量（不联网）
       vpsquota-cli refresh             立即采集所有服务器并显示结果
-      vpsquota-cli probe               逐台测试连通性，Vultr 列实例、SSH 列网卡
+      vpsquota-cli probe               逐台测试连通性，Vultr 列实例、SSH 列网卡、搬瓦工读计数器
       vpsquota-cli vultr-instances     列出 Vultr 账号下所有实例及其 allowed_bandwidth
+      vpsquota-cli bwg-probe <VEID> <API_KEY>   用凭据直接查一台搬瓦工的用量与配额（不用先写配置）
       vpsquota-cli set-key <API_KEY>   把 Vultr API Key 写入钥匙串
       vpsquota-cli config-path         打印配置文件与数据库的位置
 
@@ -62,7 +63,7 @@ func renderStatus(_ s: ServerStatus) -> String {
     return line
 }
 
-func loadMonitor() throws -> (TrafficMonitor, AppConfig) {
+func loadMonitor() async throws -> (TrafficMonitor, AppConfig) {
     let configStore = ConfigStore()
     let config = try configStore.load()
     guard !config.servers.isEmpty else {
@@ -73,7 +74,23 @@ func loadMonitor() throws -> (TrafficMonitor, AppConfig) {
     }
     let store = try SQLiteStore(path: AppPaths.databaseFile)
     let key = try? KeychainStore.vultrAPIKey()
-    return (TrafficMonitor(store: store, config: config, vultrAPIKey: key), config)
+    let monitor = TrafficMonitor(store: store, config: config, vultrAPIKey: key)
+    await monitor.setBwgAPIKeys((try? KeychainStore.bwgAPIKeys()) ?? [:])
+    return (monitor, config)
+}
+
+/// 打印一台搬瓦工的用量概况。直接吃 ServiceSummary，status/probe 之外的独立入口也能用。
+func printBwgSummary(_ s: BwgCollector.ServiceSummary) {
+    if let plan = s.plan, !plan.isEmpty { print("    套餐：     \(plan)") }
+    if let location = s.nodeLocation, !location.isEmpty { print("    机房：     \(location)") }
+    print("    已用：     \(ByteFormat.gb(Double(s.usedBytes) / 1_073_741_824))")
+    print("    月配额：   \(ByteFormat.gb(Double(s.quotaBytes) / 1_073_741_824))")
+    if let reset = s.nextReset {
+        print("    下次重置： \(reset) (UTC)")
+    }
+    if s.suspended {
+        print("    ⚠️ 该 VPS 当前处于暂停（suspended）状态")
+    }
 }
 
 do {
@@ -81,6 +98,7 @@ do {
     case "config-path":
         print("配置文件：\(AppPaths.configFile.path)")
         print("数据库：  \(AppPaths.databaseFile.path)")
+        print("搬瓦工快照：\(AppPaths.directory.appendingPathComponent("bwg-state").path)")
 
     case "set-key":
         guard arguments.count >= 2, !arguments[1].isEmpty else {
@@ -111,14 +129,27 @@ do {
         }
         print("把上面的「实例 ID」填进配置文件的 vultrInstanceId 字段。")
 
+    case "bwg-probe":
+        guard arguments.count >= 3, !arguments[1].isEmpty, !arguments[2].isEmpty else {
+            print("用法：vpsquota-cli bwg-probe <VEID> <API_KEY>")
+            exit(1)
+        }
+        let summary = try await BwgCollector(apiKey: arguments[2]).serviceInfo(veid: arguments[1])
+        print("✅ KiwiVM API 可用：\n")
+        printBwgSummary(summary)
+        print("""
+        \n把 VEID 填进配置文件的 bwgVeid 字段；API Key 在设置界面这台服务器的
+        「KiwiVM API Key」一栏填写（存钥匙串，不进配置文件）。
+        """)
+
     case "status":
-        let (monitor, _) = try loadMonitor()
+        let (monitor, _) = try await loadMonitor()
         let statuses = await monitor.statuses()
         print("本地数据（未联网刷新）：\n")
         for s in statuses { print(renderStatus(s)); print("") }
 
     case "refresh":
-        let (monitor, config) = try loadMonitor()
+        let (monitor, config) = try await loadMonitor()
         print("正在采集 \(config.servers.count) 台服务器…\n")
         let statuses = await monitor.refreshAll()
         for s in statuses { print(renderStatus(s)); print("") }
@@ -129,7 +160,7 @@ do {
         }
 
     case "probe":
-        let (_, config) = try loadMonitor()
+        let (_, config) = try await loadMonitor()
         var anyFailure = false
 
         for server in config.servers {
@@ -157,6 +188,17 @@ do {
                         print("   ⚠️ 配置里写的网卡「\(configured)」不在上面的列表中")
                         anyFailure = true
                     }
+                case .bwg:
+                    guard let veid = server.bwgVeid, !veid.isEmpty else {
+                        throw CollectError.misconfigured("配置里没有填 VEID（bwgVeid 字段）")
+                    }
+                    let keys = (try? KeychainStore.bwgAPIKeys()) ?? [:]
+                    guard let key = keys[server.id], !key.isEmpty else {
+                        throw CollectError.misconfigured("钥匙串里没有这台服务器的 KiwiVM API Key（在设置界面填写）")
+                    }
+                    let summary = try await BwgCollector(apiKey: key).serviceInfo(veid: veid)
+                    print("   ✅ API 可用")
+                    printBwgSummary(summary)
                 }
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

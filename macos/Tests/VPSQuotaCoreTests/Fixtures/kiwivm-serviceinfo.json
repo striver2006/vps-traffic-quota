@@ -1,0 +1,21 @@
+{
+  "vm_type": "kvm",
+  "veid": 2234494,
+  "hostname": "bwg-lax",
+  "node_alias": "LAX_2",
+  "node_location": "Los Angeles, California",
+  "plan": "CN2GIA_512M",
+  "plan_disk": 10737418240,
+  "plan_ram": 536870912,
+  "plan_swap": 1073741824,
+  "os": "debian-11-x86_64",
+  "email": "user@example.com",
+  "plan_monthly_data": 42949672960,
+  "monthly_data_multiplier": 2.5,
+  "data_counter": 17179869184,
+  "data_next_reset": 1794830400,
+  "ip_addresses": ["192.0.2.30"],
+  "ptr": [],
+  "suspended": 0,
+  "error": 0
+}

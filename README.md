@@ -16,7 +16,7 @@
 
 ---
 
-监控 DMIT 与 Vultr 上多台 VPS 的月度流量用量，本地桌面常驻，定时自动采集。
+监控 DMIT、Vultr 与搬瓦工上多台 VPS 的月度流量用量，本地桌面常驻，定时自动采集。
 
 - **macOS** —— 菜单栏常驻，图标旁直接显示指定那台的剩余流量（如 `1.94T` / `576G`，也可关掉只留图标）；
   鼠标移上去即浮出面板；另有主窗口作为兜底入口
@@ -28,7 +28,7 @@
 
 ## 🎯 它解决什么问题 (The Problem)
 
-DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看到，
+DMIT、Vultr 和搬瓦工的流量额度要分别登各家面板、逐台点开才能看到，
 而超额的代价是限速或停机。这个工具把各家机器的用量集中到一处，
 并按当前速度外推「这个月底会用到多少」，让你在撞上配额之前就知道。
 
@@ -37,9 +37,10 @@ DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看�
 | 服务商 | 途径 | 说明 |
 |---|---|---|
 | **Vultr** | 官方 REST API | `GET /v2/instances` 取月配额，`GET /v2/instances/{id}/bandwidth` 取每日进出字节数 |
+| **搬瓦工** | KiwiVM API | `getServiceInfo` 取账期累计计数器与月配额（均含 `monthly_data_multiplier` 折算），本地快照差值还原每日用量 |
 | **DMIT** | SSH + `vnstat` | DMIT 没有公开 API，只能登录服务器读网卡统计。这条路径适用于任何能 SSH 的服务器 |
 
-两条路径产出的都是「按天的 rx/tx 序列」，之后走完全相同的计算逻辑 ——
+三条路径产出的都是「按天的 rx/tx 序列」，之后走完全相同的计算逻辑 ——
 按账单重置日切账期、按计费口径折算、存进本地 SQLite。
 新增一家服务商只需要多写一个采集器。
 
@@ -76,6 +77,7 @@ DMIT 和 Vultr 的流量额度要分别登两个面板、逐台点开才能看�
 #### 1. 准备服务商侧
 
 - Vultr → [`docs/setup-vultr.md`](docs/setup-vultr.md)（建 API Key，**注意 IP 白名单**）
+- 搬瓦工 → [`docs/setup-bwg.md`](docs/setup-bwg.md)（KiwiVM 面板取 VEID 与按服务器发的 API Key）
 - DMIT → [`docs/setup-dmit.md`](docs/setup-dmit.md)（装 vnstat，配免密 SSH）
 
 #### 2. macOS

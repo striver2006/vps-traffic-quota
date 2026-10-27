@@ -4,6 +4,19 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-10-27
+
+### 新增
+
+- **支持搬瓦工（BandwagonHost / KiwiVM）**：
+  - 新增第三种数据来源 `provider: "bwg"`：调 KiwiVM 官方 API（`getServiceInfo`），不需要登录服务器。
+    VEID 填在配置里，**API Key 按服务器生成**，存系统钥匙串（macOS）/ DPAPI（Windows），不写入 config.json；
+    两端设置界面均有搬瓦工服务器编辑区块与「测试连接」，macOS CLI 新增 `bwg-probe` 命令。
+  - KiwiVM 只提供账期累计计数器，本工具在本地按 VEID 记快照，用「计数器差值」还原每日用量；
+    已用与配额自动乘 `monthly_data_multiplier`（部分机房流量系数），与 KiwiVM 面板同口径。
+  - 自动校验「每月重置日」与 KiwiVM 面板的下次重置日期是否一致，不一致会在面板上提醒。
+  - 接入步骤见 [`docs/setup-bwg.md`](docs/setup-bwg.md)。
+
 ## [1.0.5] - 2026-09-30
 
 ### 修复

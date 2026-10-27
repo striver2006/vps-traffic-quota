@@ -1,13 +1,16 @@
 import Foundation
 import Security
 
-/// Vultr API Key 的存放处。
+/// 各服务商 API Key 的存放处。
 ///
 /// 密钥不进 config.json —— 配置文件是明文且用户可能会拷贝/备份它。
 /// 对应 Windows 端的 DPAPI(`ProtectedData`) 实现。
 public enum KeychainStore {
     private static let service = "io.vpsquota.VPSTrafficQuota"
     private static let vultrAccount = "vultr-api-key"
+    /// 搬瓦工的 Key 是按 VEID（即按服务器）发的，一条钥匙串项里存
+    /// 「serverId → apiKey」的 JSON 字典，增删服务器时整体重写。
+    private static let bwgAccount = "bwg-api-keys"
 
     public enum KeychainError: LocalizedError {
         case failed(OSStatus)
@@ -27,6 +30,23 @@ public enum KeychainStore {
 
     public static func setVultrAPIKey(_ key: String?) throws {
         try write(account: vultrAccount, value: key)
+    }
+
+    /// serverId → KiwiVM API Key。没存过或内容坏了都返回 nil（当「没设置」处理）。
+    public static func bwgAPIKeys() throws -> [String: String]? {
+        guard let raw = try read(account: bwgAccount) else { return nil }
+        return try? JSONDecoder().decode([String: String].self, from: Data(raw.utf8))
+    }
+
+    /// 整体重写。空字典等价于删除整条钥匙串项。
+    public static func setBwgAPIKeys(_ keys: [String: String]) throws {
+        let trimmed = keys.filter { !$0.value.isEmpty }
+        guard !trimmed.isEmpty else {
+            try write(account: bwgAccount, value: nil)
+            return
+        }
+        let data = try JSONEncoder().encode(trimmed)
+        try write(account: bwgAccount, value: String(data: data, encoding: .utf8))
     }
 
     private static func read(account: String) throws -> String? {

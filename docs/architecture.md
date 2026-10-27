@@ -39,11 +39,18 @@ func fetch(server: ServerConfig, since: Date) async throws -> CollectResult
 | `reportedQuotaGB` | 上游报告的月配额。只有 Vultr 有，SSH 恒为 `nil` |
 | `warnings` | 采集成功但值得提醒的情况，例如服务器时区不是 UTC |
 
-现有两个实现：
+现有三个实现：
 
 - **`VultrCollector`** —— 调两个官方端点：`GET /v2/instances` 拿 `allowed_bandwidth`，
   `GET /v2/instances/{id}/bandwidth` 拿每日 `incoming_bytes` / `outgoing_bytes`。
   日期键本身就是 UTC，不需要换算。
+- **`BwgCollector`**（搬瓦工 KiwiVM）—— 上游只有一个**账期累计计数器**
+  （`getServiceInfo` 的 `data_counter`），没有按天的历史。所以在本地给每个 VEID
+  记一份快照（`bwg-state/<veid>.json`），每次采集用「计数器差值」还原当天用量：
+  `当天用量 = 当前计数器 − 当日基线`，同一天内绝对重算（幂等），跨天以昨天最后一次
+  观测为基线，计数器回落或下次重置时间变化即换账期归零。已用与配额都按官方要求乘
+  `monthly_data_multiplier`，与面板同口径。凭据与 Vultr 不同：API Key 按 VEID 发，
+  存储在钥匙串/DPAPI 里按 serverId 索引，不进 config.json。
 - **`SSHVnstatCollector`** —— 通过系统 `ssh` 执行 `vnstat --json d`。
   DMIT 没有公开 API，只能登服务器读网卡统计；这条路径适用于**任何能 SSH 的服务器**，
   不限于 DMIT。
@@ -143,6 +150,7 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 |---|---|---|
 | 采集抽象 | `Collectors/Collector.swift` | `Collectors/ICollector.cs` |
 | Vultr 采集 | `Collectors/VultrCollector.swift` | `Collectors/VultrCollector.cs` |
+| 搬瓦工采集 | `Collectors/BwgCollector.swift` | `Collectors/BwgCollector.cs` |
 | SSH 采集 | `Collectors/SSHVnstatCollector.swift` | `Collectors/SshVnstatCollector.cs` |
 | 账期 | `Core/BillingPeriod.swift` | `Core/BillingPeriod.cs` |
 | 折算 | `Core/QuotaCalculator.swift` | `Core/QuotaCalculator.cs` |
@@ -156,6 +164,7 @@ macOS 与 Windows 刻意保持**同名同职责**的目录结构，便于逐个�
 |---|---|---|
 | 账期切分（K1） | `BillingPeriodTests.swift` | `BillingPeriodTests.cs` |
 | 口径折算与外推（K2–K7） | `QuotaCalculatorTests.swift` | `QuotaCalculatorTests.cs` + `UsageBaselineTests.cs` |
+| 搬瓦工计数器差值（C1b） | `BwgCollectorTests.swift` | `BwgCollectorTests.cs` |
 | 存储语义（S1–S3） | `StoreTests.swift` | `SqliteStoreTests.cs` |
 | 配置契约（G2） | `CrossPlatformConfigTests.swift` | `CrossPlatformConfigTests.cs` |
 | 表结构（对照 `shared/schema.sql`） | `SchemaConsistencyTests.swift` | `SchemaConsistencyTests.cs` |

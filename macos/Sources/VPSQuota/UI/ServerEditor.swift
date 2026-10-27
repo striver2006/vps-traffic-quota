@@ -4,6 +4,9 @@ import VPSQuotaCore
 /// 单台服务器的编辑表单。
 struct ServerEditor: View {
     @Binding var server: ServerConfig
+    /// 搬瓦工的 API Key 按服务器发，存在钥匙串而不是 config.json，
+    /// 所以这个字段不属于 ServerConfig，由外层用字典绑定桥接进来。
+    @Binding var bwgAPIKey: String
     /// nil = 未测试，"" = 成功，其他 = 错误文本
     let testResult: String?
     let isTesting: Bool
@@ -19,6 +22,7 @@ struct ServerEditor: View {
             switch server.provider {
             case .vultr: vultrSection
             case .ssh: sshSection
+            case .bwg: bwgSection
             }
 
             quotaSection
@@ -69,6 +73,19 @@ struct ServerEditor: View {
         }
     }
 
+    private var bwgSection: some View {
+        Section {
+            TextField("VEID", text: optional(\.bwgVeid))
+            SecureField("KiwiVM API Key", text: $bwgAPIKey)
+            Text("两者都在 KiwiVM 面板（kiwivm.64clouds.com）左侧「KiwiVM API」一页。VEID 随配置文件走；API Key 按服务器生成，保存在系统钥匙串、不写入配置文件，换机器后需要重填。重置日请对照面板上的「下次重置」日期填写。详见 docs/setup-bwg.md。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("搬瓦工 KiwiVM")
+        }
+    }
+
     private var sshSection: some View {
         Section {
             TextField("主机", text: optional(\.sshHost))
@@ -95,6 +112,18 @@ struct ServerEditor: View {
                 Text("填 0 表示自动采用 Vultr API 报告的 allowed_bandwidth。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+            }
+            if server.provider == .bwg {
+                Text("填 0 表示自动采用 KiwiVM API 报告的月配额（已按 monthly_data_multiplier 折算，与面板一致）。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            // KiwiVM 返回的是单一计费计数器（记在出站一栏），换成其他口径会把数字翻倍。
+            if server.provider == .bwg && server.meterMode != .outbound {
+                Text("搬瓦工只有一个合并的计费计数器，计费口径请保持「仅出站」，否则用量会被放大。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Picker("计费口径", selection: $server.meterMode) {
@@ -146,6 +175,12 @@ struct ServerEditor: View {
 
     private var baselineSection: some View {
         Section {
+            if server.provider == .bwg {
+                Text("搬瓦工首次接入时，会把面板当前已用量整体记到当天，账期总量已经和面板对齐 —— 通常不需要填这一项，填了会把同一段流量补两遍。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             TextField("开始监控前已用（GB）", value: baselineBinding, format: .number)
             Text("在账期中途才装上 vnstat（或数据库被重建过）时，之前的流量本地没有记录，面板会显示得远低于真实值。从服务商面板抄一个当时的已用量填在这里，就能把缺口补上。")
                 .font(.system(size: 11))

@@ -34,7 +34,7 @@ public class CrossPlatformConfigTests
         Assert.Equal(60, config.RefreshIntervalMinutes);
         Assert.Equal("dmit-lax", config.MenuBarServerId);
         Assert.True(config.MenuBarShowsRemaining);
-        Assert.Equal(2, config.Servers.Count);
+        Assert.Equal(3, config.Servers.Count);
     }
 
     [Fact(DisplayName = "枚举一律解析自小写字符串，与 macOS 端的 RawValue 一致")]
@@ -46,6 +46,13 @@ public class CrossPlatformConfigTests
         Assert.Equal(ProviderKind.Vultr, vultr.Provider);
         Assert.Equal(MeterMode.Outbound, vultr.MeterMode);
         Assert.Equal(UnitBase.Binary, vultr.UnitBase);
+
+        var bwg = config.Servers.Single(s => s.Id == "bwg-lax");
+        Assert.Equal(ProviderKind.Bwg, bwg.Provider);
+        Assert.Equal(MeterMode.Outbound, bwg.MeterMode);
+        Assert.Equal(16, bwg.ResetDay);
+        // 字段名与 macOS 端逐字对应：VEID 叫 bwgVeid
+        Assert.StartsWith("把 KiwiVM", bwg.BwgVeid);
 
         var dmit = config.Servers.Single(s => s.Id == "dmit-lax");
         Assert.Equal(ProviderKind.Ssh, dmit.Provider);
@@ -97,6 +104,36 @@ public class CrossPlatformConfigTests
         Assert.DoesNotContain("null", json);
         // menuBarServerId 没指定，不该出现在文件里
         Assert.DoesNotContain("menuBarServerId", json);
+    }
+
+    [Fact(DisplayName = "搬瓦工字段写出驼峰名：provider 为 bwg，VEID 叫 bwgVeid")]
+    public void WritesBwgFields()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "vpsquota-bwg-" + Guid.NewGuid().ToString("n") + ".json");
+        var store = new ConfigStore(path);
+
+        store.Save(new AppConfig
+        {
+            RefreshIntervalMinutes = 60,
+            Servers = new List<ServerConfig>
+            {
+                new()
+                {
+                    Id = "bwg-lax", Name = "搬瓦工", Provider = ProviderKind.Bwg,
+                    BwgVeid = "2234494", QuotaGB = 0, MeterMode = MeterMode.Outbound, ResetDay = 16,
+                },
+            },
+        });
+
+        var json = File.ReadAllText(path);
+        try { File.Delete(path); } catch (IOException) { }
+
+        Assert.Contains("\"provider\": \"bwg\"", json);
+        Assert.Contains("\"bwgVeid\": \"2234494\"", json);
+        // 其他服务商的专用字段为 null，不写出 —— 与 macOS 端产物逐字一致
+        Assert.DoesNotContain("null", json);
+        Assert.DoesNotContain("vultrInstanceId", json);
+        Assert.DoesNotContain("sshHost", json);
     }
 
     [Fact(DisplayName = "缺必填字段的条目被跳过，其余服务器仍然可用")]

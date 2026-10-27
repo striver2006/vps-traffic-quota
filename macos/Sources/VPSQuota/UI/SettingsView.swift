@@ -30,6 +30,7 @@ struct SettingsView: View {
                 if case .server(let id) = selection, let index = indexOf(id) {
                     ServerEditor(
                         server: $model.config.servers[index],
+                        bwgAPIKey: bwgKeyBinding(for: id),
                         testResult: testResults[id],
                         isTesting: testingId == id,
                         onTest: { runTest(model.config.servers[index]) }
@@ -69,7 +70,7 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         } icon: {
-                            Image(systemName: server.provider == .vultr ? "cloud" : "terminal")
+                            Image(systemName: providerIcon(server.provider))
                         }
                         .tag(Selection.server(server.id))
                     }
@@ -82,6 +83,7 @@ struct SettingsView: View {
             HStack(spacing: 2) {
                 Menu {
                     Button("Vultr 实例") { addServer(provider: .vultr) }
+                    Button("搬瓦工（KiwiVM API）") { addServer(provider: .bwg) }
                     Button("SSH + vnstat（DMIT 等）") { addServer(provider: .ssh) }
                 } label: {
                     Image(systemName: "plus")
@@ -239,15 +241,38 @@ struct SettingsView: View {
         model.config.servers.firstIndex { $0.id == id }
     }
 
+    private func providerIcon(_ provider: ProviderKind) -> String {
+        switch provider {
+        case .vultr: return "cloud"
+        case .bwg: return "externaldrive.connected.to.line.below"
+        case .ssh: return "terminal"
+        }
+    }
+
+    /// 把 AppModel 里的「serverId → KiwiVM API Key」字典桥接成当前服务器的单值绑定。
+    private func bwgKeyBinding(for id: String) -> Binding<String> {
+        @Bindable var model = model
+        return Binding(
+            get: { model.bwgAPIKeys[id] ?? "" },
+            set: { newValue in
+                if newValue.isEmpty {
+                    model.bwgAPIKeys.removeValue(forKey: id)
+                } else {
+                    model.bwgAPIKeys[id] = newValue
+                }
+            }
+        )
+    }
+
     private func addServer(provider: ProviderKind) {
         @Bindable var model = model
         let id = "\(provider.rawValue)-\(UUID().uuidString.prefix(8).lowercased())"
         let server = ServerConfig(
             id: id,
-            name: provider == .vultr ? "新的 Vultr 实例" : "新的服务器",
+            name: provider == .vultr ? "新的 Vultr 实例" : (provider == .bwg ? "新的搬瓦工实例" : "新的服务器"),
             provider: provider,
-            quotaGB: provider == .vultr ? 0 : 1000,
-            meterMode: provider == .vultr ? .outbound : .sum,
+            quotaGB: provider == .ssh ? 1000 : 0,
+            meterMode: provider == .ssh ? .sum : .outbound,
             resetDay: 1,
             sshPort: provider == .ssh ? 22 : nil,
             sshUser: provider == .ssh ? "root" : nil

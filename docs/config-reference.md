@@ -38,8 +38,8 @@
 |---|---|---|
 | `id` | string | **内部唯一标识，也是历史数据的关联键。改了它等于丢掉这台机器的全部历史。** |
 | `name` | string | 显示名称，随便起 |
-| `provider` | `"vultr"` \| `"ssh"` | 数据来源 |
-| `quotaGB` | number | 月配额（GB）。填 `0` 时：Vultr 自动采用 API 报告的值，SSH 则显示「配额未知」 |
+| `provider` | `"vultr"` \| `"bwg"` \| `"ssh"` | 数据来源 |
+| `quotaGB` | number | 月配额（GB）。填 `0` 时：Vultr / 搬瓦工自动采用 API 报告的值，SSH 则显示「配额未知」 |
 | `meterMode` | 见下 | 计费口径 |
 | `unitBase` | `"binary"` \| `"decimal"` | GB 进制 |
 | `resetDay` | int 1–31 | 每月配额归零的日子 |
@@ -50,6 +50,14 @@
 | 字段 | 说明 |
 |---|---|
 | `vultrInstanceId` | 实例 UUID。用 `vpsquota-cli vultr-instances` 列出，或从后台 URL 里取 |
+
+### `provider: "bwg"`（搬瓦工）专用
+
+| 字段 | 说明 |
+|---|---|
+| `bwgVeid` | KiwiVM 面板「KiwiVM API」页里的 VEID（数字）。API Key **不在这里**：它按服务器生成，macOS 存钥匙串、Windows 存 DPAPI，都在设置界面按服务器填写 |
+
+接入步骤与工作原理（累计计数器如何变成每日流量）见 [`setup-bwg.md`](setup-bwg.md)。
 
 ### `provider: "ssh"` 专用
 
@@ -67,12 +75,15 @@
 
 | 取值 | 含义 | 典型场景 |
 |---|---|---|
-| `outbound` | 只算出站（tx） | Vultr；DMIT 的单向流量套餐 |
+| `outbound` | 只算出站（tx） | Vultr；DMIT 的单向流量套餐；搬瓦工（**必须**用它，见下） |
 | `inbound` | 只算入站（rx） | 少见 |
 | `sum` | 进出相加 | DMIT 的双向流量套餐 |
 | `max` | 逐日取进出中较大者 | 少数服务商 |
 
 **填错的后果**：`sum` 和 `outbound` 之间可能差一倍。程序无法探测，必须你自己确认。
+
+搬瓦工是特例：KiwiVM 返回的是**单一合并计费值**（进出已合算），工具把它记在 tx 一栏。
+因此搬瓦工的服务器**保持 `outbound`**；改成 `sum` 会把数字原样翻倍，没有任何意义。
 
 ---
 
@@ -105,6 +116,8 @@ vnstat 只能统计它自己开始记录之后的流量。**如果在账期中�
 否则它会变成凭空多出来的流量，一直虚高下去。
 
 Vultr 走 API，返回的是整个账期的完整数据，通常不需要这一项。
+搬瓦工同样不需要：首次接入时 KiwiVM 的当前已用量会被整体记到当天，总量已与面板对齐，
+再填这一项会把同一段流量补两遍。
 
 ---
 

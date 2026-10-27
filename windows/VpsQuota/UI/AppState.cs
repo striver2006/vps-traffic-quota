@@ -49,6 +49,13 @@ public sealed class AppState
     /// <summary>仅用于设置界面回填，不写进配置文件。</summary>
     public string VultrApiKey { get; set; } = "";
 
+    /// <summary>
+    /// 搬瓦工的 API Key 按服务器（VEID）发：serverId → key。
+    /// 同样只存 DPAPI 密钥文件、不进配置文件；设置界面编辑草稿副本，保存时整体落盘。
+    /// </summary>
+    public IReadOnlyDictionary<string, string> BwgApiKeys { get; private set; } =
+        new Dictionary<string, string>();
+
     public IReadOnlyList<ServerStatus> Statuses { get; private set; } = Array.Empty<ServerStatus>();
     public bool IsRefreshing { get; private set; }
     public DateTime? LastRefreshAt { get; private set; }
@@ -86,11 +93,13 @@ public sealed class AppState
         }
 
         VultrApiKey = SecretStore.GetVultrApiKey() ?? "";
+        BwgApiKeys = SecretStore.GetBwgApiKeys();
 
         try
         {
             _store = new SqliteStore(AppPaths.DatabaseFile);
             _monitor = new TrafficMonitor(_store, Config, VultrApiKey);
+            _monitor.SetBwgApiKeys(BwgApiKeys);
         }
         catch (Exception ex)
         {
@@ -187,17 +196,26 @@ public sealed class AppState
     /// <summary>
     /// 测试单台服务器的采集。返回 null 表示成功。
     /// </summary>
-    /// <param name="apiKey">设置窗口里当前编辑中的凭据，仅本次测试使用。</param>
+    /// <param name="apiKey">设置窗口里当前编辑中的 Vultr 凭据，仅本次测试使用。</param>
+    /// <param name="bwgKeys">设置窗口里当前编辑中的搬瓦工凭据，仅本次测试使用。</param>
     /// <remarks>
     /// 刻意<b>不落盘、不改动正在运行的配置</b>：「测试连接」是用来验证填得对不对的，
     /// 不该顺手把整份编辑中的配置提交掉 —— 否则用户点完测试再点 X 也放弃不了改动。
     /// </remarks>
-    public async Task<string?> TestServerAsync(ServerConfig server, string apiKey)
+    public async Task<string?> TestServerAsync(
+        ServerConfig server, string apiKey, IReadOnlyDictionary<string, string>? bwgKeys = null)
     {
         if (_monitor is null) return "数据库未就绪";
 
-        var saved = VultrApiKey;
+        var savedKey = VultrApiKey;
+        var savedBwgKeys = BwgApiKeys;
         _monitor.SetVultrApiKey(string.IsNullOrEmpty(apiKey) ? null : apiKey);
+        // 搬瓦工的 Key 属于被测的这台，只带它一条，避免其他服务器的旧值干扰。
+        var testKeys = new Dictionary<string, string>
+        {
+            [server.Id] = bwgKeys?.GetValueOrDefault(server.Id) ?? "",
+        };
+        _monitor.SetBwgApiKeys(testKeys);
         try
         {
             var error = await _monitor.RefreshOneAsync(server, DateTime.UtcNow, _lifetime.Token);
@@ -207,16 +225,22 @@ public sealed class AppState
         }
         finally
         {
-            // 草稿凭据只在这一次测试里有效，测完还给已保存的那个。
-            _monitor.SetVultrApiKey(string.IsNullOrEmpty(saved) ? null : saved);
+            // 草稿凭据只在这一次测试里有效，测完还给已保存的那些。
+            _monitor.SetVultrApiKey(string.IsNullOrEmpty(savedKey) ? null : savedKey);
+            _monitor.SetBwgApiKeys(savedBwgKeys);
         }
     }
 
     /// <summary>用设置窗口编辑好的草稿整体替换当前配置并落盘。</summary>
-    public void ApplyConfig(AppConfig config, string apiKey)
+    public void ApplyConfig(AppConfig config, string apiKey, IReadOnlyDictionary<string, string>? bwgKeys = null)
     {
         Config = config;
         VultrApiKey = apiKey;
+        // 已删除服务器的 Key 不留在密钥文件里。以本次配置里的服务器为准整体重写。
+        var validIds = config.Servers.Select(s => s.Id).ToHashSet();
+        BwgApiKeys = (bwgKeys ?? new Dictionary<string, string>())
+            .Where(kv => validIds.Contains(kv.Key) && !string.IsNullOrEmpty(kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
         SaveConfig();
     }
 
@@ -226,6 +250,7 @@ public sealed class AppState
         {
             _configStore.Save(Config);
             SecretStore.SetVultrApiKey(string.IsNullOrEmpty(VultrApiKey) ? null : VultrApiKey);
+            SecretStore.SetBwgApiKeys(BwgApiKeys);
         }
         catch (Exception ex)
         {
@@ -236,6 +261,7 @@ public sealed class AppState
 
         _monitor?.UpdateConfig(Config);
         _monitor?.SetVultrApiKey(string.IsNullOrEmpty(VultrApiKey) ? null : VultrApiKey);
+        _monitor?.SetBwgApiKeys(BwgApiKeys);
         ScheduleTimer();
         _ = RefreshAsync();
     }

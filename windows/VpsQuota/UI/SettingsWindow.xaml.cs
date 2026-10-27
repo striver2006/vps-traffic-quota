@@ -21,6 +21,12 @@ public partial class SettingsWindow : Window
     /// </summary>
     private readonly AppConfig _draft;
 
+    /// <summary>
+    /// 编辑中的搬瓦工 Key 草稿（serverId → key）。Key 不进 config.json，
+    /// 所以它不在 <see cref="_draft"/> 里，单独一份跟着草稿走，保存时整体提交。
+    /// </summary>
+    private readonly Dictionary<string, string> _bwgKeys;
+
     private ServerConfig? _current;
 
     /// <summary>
@@ -33,6 +39,7 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         _state = state;
         _draft = state.Config.Clone();
+        _bwgKeys = new Dictionary<string, string>(state.BwgApiKeys);
 
         MeterBox.ItemsSource = Enum.GetValues<MeterMode>()
             .Select(m => new ChoiceItem<MeterMode>(m, m.DisplayName())).ToList();
@@ -227,8 +234,12 @@ public partial class SettingsWindow : Window
             ? Visibility.Visible : Visibility.Collapsed;
         SshPanel.Visibility = _current.Provider == ProviderKind.Ssh
             ? Visibility.Visible : Visibility.Collapsed;
+        BwgPanel.Visibility = _current.Provider == ProviderKind.Bwg
+            ? Visibility.Visible : Visibility.Collapsed;
 
         InstanceIdBox.Text = _current.VultrInstanceId ?? "";
+        BwgVeidBox.Text = _current.BwgVeid ?? "";
+        BwgKeyBox.Password = _bwgKeys.GetValueOrDefault(_current.Id) ?? "";
         HostBox.Text = _current.SshHost ?? "";
         PortBox.Text = (_current.SshPort ?? 22).ToString();
         UserBox.Text = _current.SshUser ?? "";
@@ -261,6 +272,13 @@ public partial class SettingsWindow : Window
 
         _current.Name = NameBox.Text.Trim();
         _current.VultrInstanceId = Nullify(InstanceIdBox.Text);
+        _current.BwgVeid = Nullify(BwgVeidBox.Text);
+
+        // 搬瓦工的 Key 走密钥文件而不是 config.json，所以收进独立的草稿字典。
+        var bwgKey = Nullify(BwgKeyBox.Password);
+        if (bwgKey is null) _bwgKeys.Remove(_current.Id);
+        else _bwgKeys[_current.Id] = bwgKey;
+
         _current.SshHost = Nullify(HostBox.Text);
         _current.SshPort = int.TryParse(PortBox.Text.Trim(), out var port) && port > 0 ? port : 22;
         _current.SshUser = Nullify(UserBox.Text);
@@ -299,6 +317,8 @@ public partial class SettingsWindow : Window
 
     private void OnAddVultrClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Vultr);
 
+    private void OnAddBwgClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Bwg);
+
     private void OnAddSshClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Ssh);
 
     private void AddServer(ProviderKind provider)
@@ -308,10 +328,16 @@ public partial class SettingsWindow : Window
         var server = new ServerConfig
         {
             Id = $"{provider.ToString().ToLowerInvariant()}-{Guid.NewGuid().ToString("n")[..8]}",
-            Name = provider == ProviderKind.Vultr ? "新的 Vultr 实例" : "新的服务器",
+            Name = provider switch
+            {
+                ProviderKind.Vultr => "新的 Vultr 实例",
+                ProviderKind.Bwg => "新的搬瓦工实例",
+                _ => "新的服务器",
+            },
             Provider = provider,
-            QuotaGB = provider == ProviderKind.Vultr ? 0 : 1000,
-            MeterMode = provider == ProviderKind.Vultr ? MeterMode.Outbound : MeterMode.Sum,
+            // 搬瓦工与 Vultr 一样能从 API 拿到配额；SSH 没有配额来源，给个常见默认值。
+            QuotaGB = provider == ProviderKind.Ssh ? 1000 : 0,
+            MeterMode = provider == ProviderKind.Ssh ? MeterMode.Sum : MeterMode.Outbound,
             ResetDay = 1,
             SshPort = provider == ProviderKind.Ssh ? 22 : null,
             SshUser = provider == ProviderKind.Ssh ? "root" : null,
@@ -339,6 +365,8 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _draft.Servers.RemoveAll(s => s.Id == _current.Id);
+        // 密钥不进配置文件，删机器时把它的 KiwiVM Key 一并从草稿里清掉。
+        _bwgKeys.Remove(_current.Id);
         // 删掉的正好是托盘在显示的那台时把指向清掉，
         // 否则配置里会留下一个悬空 ID，看不出托盘为什么换了一台。
         if (_draft.MenuBarServerId == _current.Id) _draft.MenuBarServerId = null;
@@ -360,7 +388,7 @@ public partial class SettingsWindow : Window
         TestResult.Text = "测试中…";
         TestResult.Foreground = Theme.Unknown;
 
-        var error = await _state.TestServerAsync(_current, ApiKeyBox.Password);
+        var error = await _state.TestServerAsync(_current, ApiKeyBox.Password, _bwgKeys);
 
         TestButton.IsEnabled = true;
         if (error is null)
@@ -382,7 +410,7 @@ public partial class SettingsWindow : Window
         CommitMenuBarChoice();
         // 传副本：直接给 _draft 的话，保存后草稿与 _state.Config 就是同一个对象了 ——
         // 登记开机自启失败时窗口不关，之后的编辑会又直接改到正在生效的配置上。
-        _state.ApplyConfig(_draft.Clone(), ApiKeyBox.Password);
+        _state.ApplyConfig(_draft.Clone(), ApiKeyBox.Password, _bwgKeys);
         // 登记失败时不关窗，否则那条错误提示刚显示出来就随窗口一起消失了。
         if (!CommitLaunchAtLogin()) return;
         Close();

@@ -53,6 +53,7 @@
                         <TextBlock Text="服务器" Style="{StaticResource SectionTitle}" Margin="6,0,0,8"/>
                         <StackPanel Orientation="Horizontal" Margin="4,0,4,10">
                             <Button Content="Vultr" Padding="10,6" Click="OnAddVultrClick"/>
+                            <Button Content="搬瓦工" Padding="10,6" Margin="6,0,0,0" Click="OnAddBwgClick"/>
                             <Button Content="SSH" Padding="10,6" Margin="6,0,0,0" Click="OnAddSshClick"/>
                             <Button x:Name="RemoveButton" Content="删除" Padding="10,6" Margin="6,0,0,0"
                                     Click="OnRemoveClick"/>
@@ -112,6 +113,17 @@
                                 <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
                             </StackPanel>
 
+                            <StackPanel x:Name="BwgPanel">
+                                <TextBlock Text="VEID" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="BwgVeidBox" Padding="7,6" Margin="0,0,0,10"/>
+
+                                <TextBlock Text="KiwiVM API Key" Style="{StaticResource FieldLabel}"/>
+                                <PasswordBox x:Name="BwgKeyBox" Padding="7,6" Margin="0,0,0,4"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="两者都在 KiwiVM 面板（kiwivm.64clouds.com）左侧「KiwiVM API」一页。VEID 随配置文件走；API Key 按服务器生成，用 DPAPI 加密保存、不写入配置文件。重置日请对照面板上的「下次重置」日期填写。"/>
+                                <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
+                            </StackPanel>
+
                             <StackPanel x:Name="SshPanel">
                                 <Grid Margin="0,0,0,12">
                                     <Grid.ColumnDefinitions>
@@ -152,7 +164,7 @@
                                     <TextBlock Text="月配额（GB）" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="QuotaBox" Padding="7,6"/>
                                     <TextBlock Style="{StaticResource FieldHelp}"
-                                               Text="Vultr 填 0 表示自动采用 API 报告值；SSH 服务器需按套餐填写。"/>
+                                               Text="Vultr / 搬瓦工填 0 表示自动采用 API 报告值（搬瓦工已按流量系数折算）；SSH 服务器需按套餐填写。"/>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1">
                                     <TextBlock Text="每月重置日" Style="{StaticResource FieldLabel}"/>
@@ -179,10 +191,10 @@
                                        Text="配额在每月重置日归零；当月没有该日时按当月最后一天处理。口径与进制填错会导致数字对不上服务商面板，首次配置后建议校准一次。"
                                        Margin="0,8,0,14"/>
 
-                            <TextBlock Text="开始监控前已用（GB）" Style="{StaticResource FieldLabel}"/>
-                            <TextBox x:Name="BaselineBox" Padding="7,6" MaxWidth="220" HorizontalAlignment="Left"/>
-                            <TextBlock Style="{StaticResource FieldHelp}"
-                                       Text="在账期中途才安装 vnstat 时，从服务商面板抄一个当时的已用量填在这里，用于补上本地没有的历史流量。"/>
+                                <TextBlock Text="开始监控前已用（GB）" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="BaselineBox" Padding="7,6" MaxWidth="220" HorizontalAlignment="Left"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="在账期中途才安装 vnstat 时，从服务商面板抄一个当时的已用量填在这里，用于补上本地没有的历史流量。搬瓦工首次接入已把当前已用量整体记入当天，不需要填。"/>
                             <TextBlock x:Name="BaselinePeriodText" FontSize="12" Foreground="#64748B" Margin="0,4,0,16"/>
 
                             <Separator Background="#EEF2F7" Margin="0,0,0,14"/>
@@ -193,16 +205,16 @@
                             <TextBlock x:Name="TestResult" TextWrapping="Wrap" FontSize="12" Margin="0,9,0,0"/>
                         </StackPanel>
 
-                        <Border x:Name="EmptyServerPanel" Visibility="Visible"
-                                Background="#F8FAFC" BorderBrush="{StaticResource CardBorderBrush}"
-                                BorderThickness="1" CornerRadius="9" Padding="22">
-                            <StackPanel>
-                                <TextBlock Text="还没有服务器" FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{StaticResource TextPrimaryBrush}"/>
-                                <TextBlock Text="从左侧添加一台 Vultr 实例，或添加任意支持 SSH + vnstat 的 VPS。"
-                                           Style="{StaticResource FieldHelp}" Margin="0,6,0,0"/>
-                            </StackPanel>
-                        </Border>
+                            <Border x:Name="EmptyServerPanel" Visibility="Visible"
+                                    Background="#F8FAFC" BorderBrush="{StaticResource CardBorderBrush}"
+                                    BorderThickness="1" CornerRadius="9" Padding="22">
+                                <StackPanel>
+                                    <TextBlock Text="还没有服务器" FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    <TextBlock Text="从左侧添加 Vultr 实例、搬瓦工实例，或任意支持 SSH + vnstat 的 VPS。"
+                                               Style="{StaticResource FieldHelp}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                            </Border>
                     </StackPanel>
                 </ScrollViewer>
             </Border>

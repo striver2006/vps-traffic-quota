@@ -8,6 +8,8 @@ public actor TrafficMonitor {
     private let store: SQLiteStore
     private var config: AppConfig
     private var vultrAPIKey: String?
+    /// 搬瓦工的 API Key 按 VEID（即按服务器）发，这里存 serverId → key。
+    private var bwgAPIKeys: [String: String] = [:]
 
     /// Vultr 报告的配额缓存。只在用户没手填配额时才有意义，
     /// 缓存它是为了让"离线读本地数据"这条路径也能显示出配额。
@@ -30,6 +32,10 @@ public actor TrafficMonitor {
 
     public func setVultrAPIKey(_ key: String?) {
         self.vultrAPIKey = key
+    }
+
+    public func setBwgAPIKeys(_ keys: [String: String]) {
+        self.bwgAPIKeys = keys
     }
 
     public func currentConfig() -> AppConfig { config }
@@ -178,6 +184,11 @@ public actor TrafficMonitor {
             return VultrCollector(apiKey: key, quotaLookup: quotaLookup)
         case .ssh:
             return SSHVnstatCollector()
+        case .bwg:
+            guard let key = bwgAPIKeys[server.id], !key.isEmpty else {
+                throw CollectError.misconfigured("尚未设置这台服务器的 KiwiVM API Key，请在服务器编辑页填写")
+            }
+            return BwgCollector(apiKey: key)
         }
     }
 }

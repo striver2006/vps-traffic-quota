@@ -6,11 +6,14 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case vultr
     /// 通过 SSH 执行 vnstat 采集（DMIT 及任何没有 API 的服务商都走这条）
     case ssh
+    /// 通过搬瓦工 KiwiVM API 采集
+    case bwg
 
     public var displayName: String {
         switch self {
         case .vultr: return "Vultr API"
         case .ssh: return "SSH + vnstat"
+        case .bwg: return "搬瓦工 KiwiVM"
         }
     }
 }
@@ -39,6 +42,10 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     // MARK: Vultr 专用
     public var vultrInstanceId: String?
 
+    // MARK: 搬瓦工专用。VEID 不是密钥（光有它调不了 API），随配置文件走；
+    // API Key 是按服务器发的，存在钥匙串里，见 KeychainStore.bwgAPIKeys。
+    public var bwgVeid: String?
+
     // MARK: SSH 专用
     public var sshHost: String?
     public var sshPort: Int?
@@ -61,6 +68,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.unitBase = try c.decodeIfPresent(UnitBase.self, forKey: .unitBase) ?? .binary
         self.usageBaseline = try c.decodeIfPresent(UsageBaseline.self, forKey: .usageBaseline)
         self.vultrInstanceId = try c.decodeIfPresent(String.self, forKey: .vultrInstanceId)
+        self.bwgVeid = try c.decodeIfPresent(String.self, forKey: .bwgVeid)
         self.sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
         self.sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort)
         self.sshUser = try c.decodeIfPresent(String.self, forKey: .sshUser)
@@ -78,6 +86,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         unitBase: UnitBase = .binary,
         usageBaseline: UsageBaseline? = nil,
         vultrInstanceId: String? = nil,
+        bwgVeid: String? = nil,
         sshHost: String? = nil,
         sshPort: Int? = nil,
         sshUser: String? = nil,
@@ -93,6 +102,7 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.unitBase = unitBase
         self.usageBaseline = usageBaseline
         self.vultrInstanceId = vultrInstanceId
+        self.bwgVeid = bwgVeid
         self.sshHost = sshHost
         self.sshPort = sshPort
         self.sshUser = sshUser

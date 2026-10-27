@@ -45,6 +45,8 @@ public enum ProviderKind
     Vultr,
     /// <summary>通过 SSH 执行 vnstat 采集（DMIT 及任何没有 API 的服务商都走这条）</summary>
     Ssh,
+    /// <summary>通过搬瓦工 KiwiVM API 采集</summary>
+    Bwg,
 }
 
 /// <summary>用量的严重程度，决定进度条与托盘图标的配色。</summary>
@@ -115,6 +117,7 @@ public static class EnumExtensions
     {
         ProviderKind.Vultr => "Vultr API",
         ProviderKind.Ssh => "SSH + vnstat",
+        ProviderKind.Bwg => "搬瓦工 KiwiVM",
         _ => provider.ToString(),
     };
 }

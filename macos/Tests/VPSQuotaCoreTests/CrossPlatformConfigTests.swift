@@ -126,6 +126,37 @@ struct CrossPlatformConfigTests {
         #expect((baseline["usedGB"] as? Double) == 320.5)
     }
 
+    @Test("搬瓦工的字段名与 C# 端逐字对应：provider 为 bwg，VEID 叫 bwgVeid")
+    func bwgFieldNames() throws {
+        let config = AppConfig(servers: [
+            ServerConfig(id: "bwg-lax", name: "搬瓦工", provider: .bwg,
+                         bwgVeid: "2234494"),
+        ])
+        let json = try encode(config)
+        let server = try #require((json["servers"] as? [[String: Any]])?.first)
+
+        #expect(server["provider"] as? String == "bwg")
+        #expect(server["bwgVeid"] as? String == "2234494")
+    }
+
+    @Test("能读入 Windows 端写出的搬瓦工配置")
+    func decodesWindowsBwgConfig() throws {
+        let json = """
+        {
+          "refreshIntervalMinutes": 60,
+          "servers": [{
+            "id": "bwg-lax", "name": "搬瓦工", "provider": "bwg",
+            "bwgVeid": "2234494", "quotaGB": 0, "meterMode": "outbound",
+            "resetDay": 16, "unitBase": "binary"
+          }]
+        }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        let server = try #require(config.servers.first)
+        #expect(server.provider == .bwg)
+        #expect(server.bwgVeid == "2234494")
+    }
+
     @Test("没有基准时该字段不出现在 JSON 里，不污染旧配置")
     func baselineOmittedWhenNil() throws {
         let config = AppConfig(servers: [
@@ -221,7 +252,7 @@ struct CrossPlatformConfigTests {
             .appendingPathComponent("shared/config.example.json")
         let data = try Data(contentsOf: url)
         let config = try JSONDecoder().decode(AppConfig.self, from: data)
-        #expect(config.servers.count == 2)
+        #expect(config.servers.count == 3)
         #expect(config.refreshIntervalMinutes == 60)
     }
 }

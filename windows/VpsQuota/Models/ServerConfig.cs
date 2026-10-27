@@ -41,6 +41,10 @@ public sealed class ServerConfig
     // Vultr 专用
     public string? VultrInstanceId { get; set; }
 
+    // 搬瓦工专用。VEID 不是密钥（光有它调不了 API），随配置文件走；
+    // API Key 是按服务器发的，存在 DPAPI 密钥文件里，见 SecretStore.GetBwgApiKeys。
+    public string? BwgVeid { get; set; }
+
     // SSH 专用
     public string? SshHost { get; set; }
     public int? SshPort { get; set; }

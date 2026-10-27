@@ -16,7 +16,7 @@
 
 ---
 
-Monitor monthly bandwidth usage across VPS instances on DMIT and Vultr.
+Monitor monthly bandwidth usage across VPS instances on DMIT, Vultr and BandwagonHost.
 Runs locally in your desktop's status area, collects on a schedule.
 
 - **macOS** — lives in the menu bar; the icon shows how much traffic the server you
@@ -33,7 +33,7 @@ and local database schema.
 
 ## 🎯 The Problem (它解决什么问题)
 
-DMIT and Vultr each require logging into a separate panel and clicking through every
+DMIT, Vultr and BandwagonHost each require logging into a separate panel and clicking through every
 instance just to see where its bandwidth stands — and the cost of going over is
 throttling or suspension.
 
@@ -46,6 +46,7 @@ hit the cap rather than after.
 | Provider | Method | Notes |
 |---|---|---|
 | **Vultr** | Official REST API | `GET /v2/instances` for the monthly cap, `GET /v2/instances/{id}/bandwidth` for daily in/out bytes |
+| **BandwagonHost** | KiwiVM API | `getServiceInfo` returns a per-billing-cycle cumulative counter plus the monthly cap (both already adjusted by `monthly_data_multiplier`); daily usage is reconstructed from local snapshots of the counter |
 | **DMIT** | SSH + `vnstat` | DMIT has no public API, so the only option is reading interface counters over SSH. This path works for **any** server you can SSH into |
 
 Both paths produce the same thing — a per-day rx/tx series — and everything
@@ -86,6 +87,7 @@ Download the latest releases from [GitHub Releases](https://github.com/striver20
 #### 1. Provider side
 
 - Vultr → [`docs/setup-vultr.md`](docs/setup-vultr.md) (create an API key — **mind the IP allowlist**)
+- BandwagonHost → [`docs/setup-bwg.md`](docs/setup-bwg.md) (get the VEID and per-server API key from the KiwiVM panel; guide is in Chinese)
 - DMIT → [`docs/setup-dmit.md`](docs/setup-dmit.md) (install vnstat, set up key-based SSH)
 
 > Both guides are written in Chinese. The field-by-field
