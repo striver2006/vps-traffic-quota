@@ -4,6 +4,24 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-11-01
+
+### 新增
+
+- **支持 RackNerd（SolusVM API）**：
+  - 新增数据来源 `provider: "racknerd"`：调用 SolusVM Client API（`action=info&bw=true`）读取已用带宽与总配额，无需登录服务器。
+  - **API Key 与 API Hash** 按服务器配置并安全存储在系统钥匙串（macOS）/ DPAPI（Windows），不写入 `config.json`。
+  - 本地记录账期差值快照，自动计算每日流量增量并保持幂等自愈。
+  - 两端设置界面均提供服务器编辑区块与「测试连接」，macOS CLI 新增 `racknerd-probe` 命令。
+  - 详细接入步骤见 [`docs/setup-racknerd.md`](docs/setup-racknerd.md)。
+
+- **支持 Hetzner Cloud**：
+  - 新增数据来源 `provider: "hetzner"`：通过 Hetzner Cloud REST API（`GET /v1/servers/{id}`）直接读取出站流量（`outgoing_traffic`）与套餐配额（`included_traffic`）。
+  - 支持在通用设置中配置全局 **Hetzner API Token**，也支持单台服务器独立配置项目 Token。Token 均安全存储在系统钥匙串（macOS）/ DPAPI（Windows），不写入 `config.json`。
+  - 默认以每月 1 日自然月为账期重置日，本地快照精准追踪每日增量。
+  - 两端设置界面均提供服务器编辑区块与「测试连接」，macOS CLI 新增 `hetzner-probe` 与 `hetzner-instances` 命令。
+  - 详细接入步骤见 [`docs/setup-hetzner.md`](docs/setup-hetzner.md)。
+
 ## [1.1.0] - 2026-10-27
 
 ### 新增

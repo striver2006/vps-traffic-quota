@@ -37,14 +37,14 @@ for arg in "$@"; do
         --no-universal) UNIVERSAL=0 ;;
         --dmg) MAKE_DMG=1 ;;
         --no-dmg) MAKE_DMG=0 ;;
-        *) echo "未知参数: $arg（可用: release debug --install --clean --universal --no-universal --dmg --no-dmg）" >&2; exit 1 ;;
+        *) echo "未知参数: ${arg}（可用: release debug --install --clean --universal --no-universal --dmg --no-dmg）" >&2; exit 1 ;;
     esac
 done
 
 APP_NAME="VPSQuota"
 DISPLAY_NAME="VPS 流量"
 BUNDLE_ID="io.vpsquota.VPSTrafficQuota"
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 APP_DIR="$ROOT/build/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"

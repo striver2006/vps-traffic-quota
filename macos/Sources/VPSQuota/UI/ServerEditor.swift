@@ -7,6 +7,11 @@ struct ServerEditor: View {
     /// 搬瓦工的 API Key 按服务器发，存在钥匙串而不是 config.json，
     /// 所以这个字段不属于 ServerConfig，由外层用字典绑定桥接进来。
     @Binding var bwgAPIKey: String
+    /// RackNerd API Key 与 Hash
+    @Binding var rackNerdKey: String
+    @Binding var rackNerdHash: String
+    /// Hetzner 独立 API Token
+    @Binding var hetznerServerToken: String
     /// nil = 未测试，"" = 成功，其他 = 错误文本
     let testResult: String?
     let isTesting: Bool
@@ -23,6 +28,8 @@ struct ServerEditor: View {
             case .vultr: vultrSection
             case .ssh: sshSection
             case .bwg: bwgSection
+            case .racknerd: racknerdSection
+            case .hetzner: hetznerSection
             }
 
             quotaSection
@@ -83,6 +90,33 @@ struct ServerEditor: View {
                 .fixedSize(horizontal: false, vertical: true)
         } header: {
             Text("搬瓦工 KiwiVM")
+        }
+    }
+
+    private var racknerdSection: some View {
+        Section {
+            SecureField("API Key", text: $rackNerdKey)
+            SecureField("API Hash", text: $rackNerdHash)
+            TextField("端点 URL", text: optional(\.racknerdEndpoint), prompt: Text("https://nerdvm.racknerd.com/api/client/command.php"))
+            Text("登录 RackNerd VPS 控制面板（通常为 nerdvm.racknerd.com），进入对应 VPS 的「API」选项卡，点击「Generate」生成 API Key 与 API Hash。留空端点 URL 将默认使用 nerdvm.racknerd.com。密钥保存在系统钥匙串，不写入配置文件。详见 docs/setup-racknerd.md。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("RackNerd SolusVM API")
+        }
+    }
+
+    private var hetznerSection: some View {
+        Section {
+            TextField("Server ID", text: optional(\.hetznerServerId), prompt: Text("如 12345678"))
+            SecureField("API Token（可选覆盖）", text: $hetznerServerToken)
+            Text("Server ID 可在 Hetzner Cloud Console 中该主机的详情页 URL 或概览中找到。若此处 API Token 留空，将自动使用「常规设置」中的全局 Hetzner API Token。密钥保存在系统钥匙串，不写入配置文件。详见 docs/setup-hetzner.md。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("Hetzner Cloud")
         }
     }
 

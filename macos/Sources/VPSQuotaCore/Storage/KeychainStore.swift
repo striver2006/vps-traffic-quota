@@ -11,6 +11,23 @@ public enum KeychainStore {
     /// 搬瓦工的 Key 是按 VEID（即按服务器）发的，一条钥匙串项里存
     /// 「serverId → apiKey」的 JSON 字典，增删服务器时整体重写。
     private static let bwgAccount = "bwg-api-keys"
+    /// RackNerd 的 Key 和 Hash 按服务器发，一条钥匙串项里存
+    /// 「serverId → RackNerdSecret」的 JSON 字典。
+    private static let rackNerdAccount = "racknerd-api-keys"
+    /// Hetzner Cloud 全局 API Token。
+    private static let hetznerTokenAccount = "hetzner-api-token"
+    /// Hetzner 按服务器配置的独立 Token（可选覆盖全局）。
+    private static let hetznerServerTokensAccount = "hetzner-server-tokens"
+
+    public struct RackNerdSecret: Codable, Equatable, Sendable {
+        public var key: String
+        public var hash: String
+
+        public init(key: String, hash: String) {
+            self.key = key
+            self.hash = hash
+        }
+    }
 
     public enum KeychainError: LocalizedError {
         case failed(OSStatus)
@@ -47,6 +64,49 @@ public enum KeychainStore {
         }
         let data = try JSONEncoder().encode(trimmed)
         try write(account: bwgAccount, value: String(data: data, encoding: .utf8))
+    }
+
+    /// serverId → RackNerd API Key/Hash。
+    public static func rackNerdSecrets() throws -> [String: RackNerdSecret]? {
+        guard let raw = try read(account: rackNerdAccount) else { return nil }
+        return try? JSONDecoder().decode([String: RackNerdSecret].self, from: Data(raw.utf8))
+    }
+
+    /// 整体重写 RackNerd 密钥。
+    public static func setRackNerdSecrets(_ secrets: [String: RackNerdSecret]) throws {
+        let trimmed = secrets.filter { !$0.value.key.isEmpty && !$0.value.hash.isEmpty }
+        guard !trimmed.isEmpty else {
+            try write(account: rackNerdAccount, value: nil)
+            return
+        }
+        let data = try JSONEncoder().encode(trimmed)
+        try write(account: rackNerdAccount, value: String(data: data, encoding: .utf8))
+    }
+
+    /// Hetzner Cloud 全局 API Token。
+    public static func hetznerAPIToken() throws -> String? {
+        try read(account: hetznerTokenAccount)
+    }
+
+    public static func setHetznerAPIToken(_ token: String?) throws {
+        try write(account: hetznerTokenAccount, value: token)
+    }
+
+    /// serverId → Hetzner 独立 API Token。
+    public static func hetznerServerTokens() throws -> [String: String]? {
+        guard let raw = try read(account: hetznerServerTokensAccount) else { return nil }
+        return try? JSONDecoder().decode([String: String].self, from: Data(raw.utf8))
+    }
+
+    /// 整体重写 Hetzner 服务器独立 Token。
+    public static func setHetznerServerTokens(_ tokens: [String: String]) throws {
+        let trimmed = tokens.filter { !$0.value.isEmpty }
+        guard !trimmed.isEmpty else {
+            try write(account: hetznerServerTokensAccount, value: nil)
+            return
+        }
+        let data = try JSONEncoder().encode(trimmed)
+        try write(account: hetznerServerTokensAccount, value: String(data: data, encoding: .utf8))
     }
 
     private static func read(account: String) throws -> String? {

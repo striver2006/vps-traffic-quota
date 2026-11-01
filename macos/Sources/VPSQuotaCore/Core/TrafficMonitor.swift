@@ -10,6 +10,12 @@ public actor TrafficMonitor {
     private var vultrAPIKey: String?
     /// 搬瓦工的 API Key 按 VEID（即按服务器）发，这里存 serverId → key。
     private var bwgAPIKeys: [String: String] = [:]
+    /// RackNerd 凭据按服务器发，这里存 serverId → RackNerdSecret。
+    private var rackNerdSecrets: [String: KeychainStore.RackNerdSecret] = [:]
+    /// Hetzner Cloud 全局 API Token。
+    private var hetznerAPIToken: String?
+    /// Hetzner 按服务器配置的独立 Token。
+    private var hetznerServerTokens: [String: String] = [:]
 
     /// Vultr 报告的配额缓存。只在用户没手填配额时才有意义，
     /// 缓存它是为了让"离线读本地数据"这条路径也能显示出配额。
@@ -36,6 +42,18 @@ public actor TrafficMonitor {
 
     public func setBwgAPIKeys(_ keys: [String: String]) {
         self.bwgAPIKeys = keys
+    }
+
+    public func setRackNerdSecrets(_ secrets: [String: KeychainStore.RackNerdSecret]) {
+        self.rackNerdSecrets = secrets
+    }
+
+    public func setHetznerAPIToken(_ token: String?) {
+        self.hetznerAPIToken = token
+    }
+
+    public func setHetznerServerTokens(_ tokens: [String: String]) {
+        self.hetznerServerTokens = tokens
     }
 
     public func currentConfig() -> AppConfig { config }
@@ -189,6 +207,20 @@ public actor TrafficMonitor {
                 throw CollectError.misconfigured("尚未设置这台服务器的 KiwiVM API Key，请在服务器编辑页填写")
             }
             return BwgCollector(apiKey: key)
+        case .racknerd:
+            guard let secret = rackNerdSecrets[server.id], !secret.key.isEmpty, !secret.hash.isEmpty else {
+                throw CollectError.misconfigured("尚未设置这台服务器的 RackNerd API Key 或 API Hash，请在服务器编辑页填写")
+            }
+            let endpointURL = server.racknerdEndpoint.flatMap { $0.isEmpty ? nil : URL(string: $0) }
+            return RackNerdCollector(apiKey: secret.key, apiHash: secret.hash, endpoint: endpointURL)
+        case .hetzner:
+            let token = (hetznerServerTokens[server.id]?.isEmpty == false)
+                ? hetznerServerTokens[server.id]
+                : hetznerAPIToken
+            guard let validToken = token, !validToken.isEmpty else {
+                throw CollectError.misconfigured("尚未设置 Hetzner API Token，请在通用设置或服务器编辑页填写")
+            }
+            return HetznerCollector(apiToken: validToken)
         }
     }
 }

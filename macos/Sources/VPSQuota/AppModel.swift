@@ -55,6 +55,15 @@ final class AppModel {
     /// 同样只存钥匙串、不进配置文件；编辑界面直接改这份字典，保存时整体落盘。
     var bwgAPIKeys: [String: String] = [:]
 
+    /// RackNerd 凭据（Key & Hash）按服务器发：serverId → RackNerdSecret。
+    var rackNerdSecrets: [String: KeychainStore.RackNerdSecret] = [:]
+
+    /// Hetzner Cloud 全局 API Token。
+    var hetznerAPIToken: String = ""
+
+    /// Hetzner 独立 API Token（按服务器覆盖）：serverId → token。
+    var hetznerServerTokens: [String: String] = [:]
+
     /// 应用的呈现方式。改动立即生效并持久化。
     var displayMode: DisplayMode {
         didSet {
@@ -132,9 +141,15 @@ final class AppModel {
         do {
             self.vultrAPIKey = try KeychainStore.vultrAPIKey() ?? ""
             self.bwgAPIKeys = (try KeychainStore.bwgAPIKeys()) ?? [:]
+            self.rackNerdSecrets = (try KeychainStore.rackNerdSecrets()) ?? [:]
+            self.hetznerAPIToken = (try KeychainStore.hetznerAPIToken()) ?? ""
+            self.hetznerServerTokens = (try KeychainStore.hetznerServerTokens()) ?? [:]
         } catch {
             self.vultrAPIKey = ""
             self.bwgAPIKeys = [:]
+            self.rackNerdSecrets = [:]
+            self.hetznerAPIToken = ""
+            self.hetznerServerTokens = [:]
             self.keychainUnavailable = true
         }
 
@@ -212,6 +227,9 @@ final class AppModel {
         guard let monitor, !didStart else { return }
         didStart = true
         await monitor.setBwgAPIKeys(bwgAPIKeys)
+        await monitor.setRackNerdSecrets(rackNerdSecrets)
+        await monitor.setHetznerAPIToken(hetznerAPIToken.isEmpty ? nil : hetznerAPIToken)
+        await monitor.setHetznerServerTokens(hetznerServerTokens)
         statuses = await monitor.statuses()
         scheduleTimer()
         scheduleRolloverCheck()
@@ -263,6 +281,8 @@ final class AppModel {
         // 已删除服务器的 Key 不留在钥匙串里。以本次配置里的服务器为准整体重写。
         let validIds = Set(config.servers.map(\.id))
         let keysToSave = bwgAPIKeys.filter { validIds.contains($0.key) && !$0.value.isEmpty }
+        let rnToSave = rackNerdSecrets.filter { validIds.contains($0.key) && !$0.value.key.isEmpty && !$0.value.hash.isEmpty }
+        let hetznerTokensToSave = hetznerServerTokens.filter { validIds.contains($0.key) && !$0.value.isEmpty }
 
         do {
             try configStore.save(config)
@@ -275,6 +295,15 @@ final class AppModel {
             if !(keychainUnavailable && keysToSave.isEmpty) {
                 try KeychainStore.setBwgAPIKeys(keysToSave)
             }
+            if !(keychainUnavailable && rnToSave.isEmpty) {
+                try KeychainStore.setRackNerdSecrets(rnToSave)
+            }
+            if !(keychainUnavailable && hetznerAPIToken.isEmpty) {
+                try KeychainStore.setHetznerAPIToken(hetznerAPIToken.isEmpty ? nil : hetznerAPIToken)
+            }
+            if !(keychainUnavailable && hetznerTokensToSave.isEmpty) {
+                try KeychainStore.setHetznerServerTokens(hetznerTokensToSave)
+            }
         } catch {
             fatalError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             return
@@ -283,6 +312,9 @@ final class AppModel {
             await monitor?.updateConfig(config)
             await monitor?.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
             await monitor?.setBwgAPIKeys(keysToSave)
+            await monitor?.setRackNerdSecrets(rnToSave)
+            await monitor?.setHetznerAPIToken(hetznerAPIToken.isEmpty ? nil : hetznerAPIToken)
+            await monitor?.setHetznerServerTokens(hetznerTokensToSave)
             scheduleTimer()
             await refresh()
         }
@@ -292,11 +324,19 @@ final class AppModel {
     func testServer(_ server: ServerConfig) async -> String? {
         guard let monitor else { return "数据库未就绪" }
         // 测试用的是当前编辑中的凭据，先同步过去，否则测的还是旧 Key。
-        // 搬瓦工的 Key 属于被测的这台，只带它一条，避免旧值干扰。
         await monitor.setVultrAPIKey(vultrAPIKey.isEmpty ? nil : vultrAPIKey)
         await monitor.setBwgAPIKeys([server.id: bwgAPIKeys[server.id] ?? ""])
+        if let rn = rackNerdSecrets[server.id] {
+            await monitor.setRackNerdSecrets([server.id: rn])
+        }
+        await monitor.setHetznerAPIToken(hetznerAPIToken.isEmpty ? nil : hetznerAPIToken)
+        await monitor.setHetznerServerTokens([server.id: hetznerServerTokens[server.id] ?? ""])
+
         let error = await monitor.refreshOne(server: server)
         await monitor.setBwgAPIKeys(bwgAPIKeys)
+        await monitor.setRackNerdSecrets(rackNerdSecrets)
+        await monitor.setHetznerAPIToken(hetznerAPIToken.isEmpty ? nil : hetznerAPIToken)
+        await monitor.setHetznerServerTokens(hetznerServerTokens)
         statuses = await monitor.statuses()
         return error
     }

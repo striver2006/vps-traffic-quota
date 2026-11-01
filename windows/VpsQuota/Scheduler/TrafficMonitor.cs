@@ -23,6 +23,17 @@ public sealed class TrafficMonitor
     private IReadOnlyDictionary<string, string> _bwgApiKeys =
         new Dictionary<string, string>();
 
+    /// <summary>Hetzner 全局 API Token。</summary>
+    private string? _hetznerApiToken;
+
+    /// <summary>Hetzner 独立 API Token（按服务器覆盖）。</summary>
+    private IReadOnlyDictionary<string, string> _hetznerServerTokens =
+        new Dictionary<string, string>();
+
+    /// <summary>RackNerd 凭据（Key & Hash）。</summary>
+    private IReadOnlyDictionary<string, SecretStore.RackNerdSecret> _rackNerdSecrets =
+        new Dictionary<string, SecretStore.RackNerdSecret>();
+
     /// <summary>
     /// Vultr 报告的配额缓存。只在用户没手填配额时才有意义，
     /// 缓存它是为了让"离线读本地数据"这条路径也能显示出配额。
@@ -50,6 +61,14 @@ public sealed class TrafficMonitor
 
     public void SetBwgApiKeys(IReadOnlyDictionary<string, string>? keys) =>
         _bwgApiKeys = keys ?? new Dictionary<string, string>();
+
+    public void SetHetznerApiToken(string? token) => _hetznerApiToken = token;
+
+    public void SetHetznerServerTokens(IReadOnlyDictionary<string, string>? tokens) =>
+        _hetznerServerTokens = tokens ?? new Dictionary<string, string>();
+
+    public void SetRackNerdSecrets(IReadOnlyDictionary<string, SecretStore.RackNerdSecret>? secrets) =>
+        _rackNerdSecrets = secrets ?? new Dictionary<string, SecretStore.RackNerdSecret>();
 
     /// <summary>
     /// 并发采集所有服务器，落库后返回最新状态。
@@ -234,6 +253,23 @@ public sealed class TrafficMonitor
                 if (string.IsNullOrEmpty(key))
                     throw CollectException.Misconfigured("尚未设置这台服务器的 KiwiVM API Key，请在服务器编辑页填写");
                 return new BwgCollector(key);
+
+            case ProviderKind.Racknerd:
+                if (!_rackNerdSecrets.TryGetValue(server.Id, out var rnSecret) ||
+                    string.IsNullOrEmpty(rnSecret.Key) || string.IsNullOrEmpty(rnSecret.Hash))
+                {
+                    throw CollectException.Misconfigured("尚未设置这台服务器的 RackNerd API Key 或 API Hash，请在服务器编辑页填写");
+                }
+                return new RackNerdCollector(rnSecret.Key, rnSecret.Hash, endpoint: server.RacknerdEndpoint);
+
+            case ProviderKind.Hetzner:
+                var token = _hetznerServerTokens.GetValueOrDefault(server.Id);
+                if (string.IsNullOrEmpty(token)) token = _hetznerApiToken;
+                if (string.IsNullOrEmpty(token))
+                {
+                    throw CollectException.Misconfigured("尚未设置 Hetzner API Token，请在通用设置或服务器编辑页填写");
+                }
+                return new HetznerCollector(token);
 
             default:
                 throw CollectException.Misconfigured($"未知的服务商类型：{server.Provider}");

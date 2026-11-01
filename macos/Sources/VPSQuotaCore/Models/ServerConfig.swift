@@ -8,12 +8,18 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case ssh
     /// 通过搬瓦工 KiwiVM API 采集
     case bwg
+    /// 通过 RackNerd SolusVM API 采集
+    case racknerd
+    /// 通过 Hetzner Cloud API 采集
+    case hetzner
 
     public var displayName: String {
         switch self {
         case .vultr: return "Vultr API"
         case .ssh: return "SSH + vnstat"
         case .bwg: return "搬瓦工 KiwiVM"
+        case .racknerd: return "RackNerd API"
+        case .hetzner: return "Hetzner Cloud"
         }
     }
 }
@@ -46,6 +52,14 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     // API Key 是按服务器发的，存在钥匙串里，见 KeychainStore.bwgAPIKeys。
     public var bwgVeid: String?
 
+    // MARK: RackNerd 专用。端点随配置文件走，默认为 https://nerdvm.racknerd.com/api/client/command.php。
+    // API Key 与 API Hash 按服务器发，存在钥匙串里，见 KeychainStore.rackNerdSecrets。
+    public var racknerdEndpoint: String?
+
+    // MARK: Hetzner 专用。实例 ID 随配置文件走；
+    // API Token 存在钥匙串里，见 KeychainStore.hetznerAPIToken / KeychainStore.hetznerServerTokens。
+    public var hetznerServerId: String?
+
     // MARK: SSH 专用
     public var sshHost: String?
     public var sshPort: Int?
@@ -69,6 +83,8 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.usageBaseline = try c.decodeIfPresent(UsageBaseline.self, forKey: .usageBaseline)
         self.vultrInstanceId = try c.decodeIfPresent(String.self, forKey: .vultrInstanceId)
         self.bwgVeid = try c.decodeIfPresent(String.self, forKey: .bwgVeid)
+        self.racknerdEndpoint = try c.decodeIfPresent(String.self, forKey: .racknerdEndpoint)
+        self.hetznerServerId = try c.decodeIfPresent(String.self, forKey: .hetznerServerId)
         self.sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
         self.sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort)
         self.sshUser = try c.decodeIfPresent(String.self, forKey: .sshUser)
@@ -87,6 +103,8 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         usageBaseline: UsageBaseline? = nil,
         vultrInstanceId: String? = nil,
         bwgVeid: String? = nil,
+        racknerdEndpoint: String? = nil,
+        hetznerServerId: String? = nil,
         sshHost: String? = nil,
         sshPort: Int? = nil,
         sshUser: String? = nil,
@@ -103,6 +121,8 @@ public struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
         self.usageBaseline = usageBaseline
         self.vultrInstanceId = vultrInstanceId
         self.bwgVeid = bwgVeid
+        self.racknerdEndpoint = racknerdEndpoint
+        self.hetznerServerId = hetznerServerId
         self.sshHost = sshHost
         self.sshPort = sshPort
         self.sshUser = sshUser

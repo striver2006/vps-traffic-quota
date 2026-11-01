@@ -30,6 +30,27 @@
       "unitBase": "binary"
     },
     {
+      "id": "rn-lax",
+      "name": "RackNerd 洛杉矶",
+      "provider": "racknerd",
+      "//racknerdEndpoint": "可选，默认为 https://nerdvm.racknerd.com/api/client/command.php。API Key 与 API Hash 不写在这里：macOS 存钥匙串、Windows 存 DPAPI，在设置界面按服务器填写。配额填 0 自动采用 API 报告值。",
+      "quotaGB": 0,
+      "meterMode": "outbound",
+      "resetDay": 1,
+      "unitBase": "binary"
+    },
+    {
+      "id": "hetzner-fsn1",
+      "name": "Hetzner Falkenstein",
+      "provider": "hetzner",
+      "//hetznerServerId": "在 Hetzner Cloud Console 中该主机的 Server ID。API Token 不写在这里：macOS 存钥匙串、Windows 存 DPAPI，在通用设置填全局 Token 或在服务器页单独填。配额填 0 自动采用 API 报告的 included_traffic。",
+      "hetznerServerId": "12345678",
+      "quotaGB": 0,
+      "meterMode": "outbound",
+      "resetDay": 1,
+      "unitBase": "binary"
+    },
+    {
       "id": "dmit-lax",
       "name": "DMIT 洛杉矶",
       "provider": "ssh",

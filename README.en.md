@@ -16,7 +16,7 @@
 
 ---
 
-Monitor monthly bandwidth usage across VPS instances on DMIT, Vultr and BandwagonHost.
+Monitor monthly bandwidth usage across VPS instances on DMIT, Vultr, BandwagonHost, RackNerd, and Hetzner.
 Runs locally in your desktop's status area, collects on a schedule.
 
 - **macOS** — lives in the menu bar; the icon shows how much traffic the server you
@@ -47,6 +47,8 @@ hit the cap rather than after.
 |---|---|---|
 | **Vultr** | Official REST API | `GET /v2/instances` for the monthly cap, `GET /v2/instances/{id}/bandwidth` for daily in/out bytes |
 | **BandwagonHost** | KiwiVM API | `getServiceInfo` returns a per-billing-cycle cumulative counter plus the monthly cap (both already adjusted by `monthly_data_multiplier`); daily usage is reconstructed from local snapshots of the counter |
+| **RackNerd** | SolusVM Client API | `action=info&bw=true` for cumulative used bandwidth and total allocated limit; daily usage reconstructed from local snapshots |
+| **Hetzner** | Hetzner Cloud API | `GET /v1/servers/{id}` returns outgoing, ingoing, and included traffic; daily usage reconstructed from local snapshots |
 | **DMIT** | SSH + `vnstat` | DMIT has no public API, so the only option is reading interface counters over SSH. This path works for **any** server you can SSH into |
 
 Both paths produce the same thing — a per-day rx/tx series — and everything
@@ -88,6 +90,8 @@ Download the latest releases from [GitHub Releases](https://github.com/striver20
 
 - Vultr → [`docs/setup-vultr.md`](docs/setup-vultr.md) (create an API key — **mind the IP allowlist**)
 - BandwagonHost → [`docs/setup-bwg.md`](docs/setup-bwg.md) (get the VEID and per-server API key from the KiwiVM panel; guide is in Chinese)
+- RackNerd → [`docs/setup-racknerd.md`](docs/setup-racknerd.md) (generate API Key and Hash from NerdVM panel; guide is in Chinese)
+- Hetzner → [`docs/setup-hetzner.md`](docs/setup-hetzner.md) (generate API Token in Cloud Console and get Server ID; guide is in Chinese)
 - DMIT → [`docs/setup-dmit.md`](docs/setup-dmit.md) (install vnstat, set up key-based SSH)
 
 > Both guides are written in Chinese. The field-by-field

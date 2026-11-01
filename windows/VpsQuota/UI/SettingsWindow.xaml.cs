@@ -27,6 +27,9 @@ public partial class SettingsWindow : Window
     /// </summary>
     private readonly Dictionary<string, string> _bwgKeys;
 
+    private readonly Dictionary<string, SecretStore.RackNerdSecret> _rnSecrets;
+    private readonly Dictionary<string, string> _hetznerServerTokens;
+
     private ServerConfig? _current;
 
     /// <summary>
@@ -40,6 +43,8 @@ public partial class SettingsWindow : Window
         _state = state;
         _draft = state.Config.Clone();
         _bwgKeys = new Dictionary<string, string>(state.BwgApiKeys);
+        _rnSecrets = new Dictionary<string, SecretStore.RackNerdSecret>(state.RackNerdSecrets);
+        _hetznerServerTokens = new Dictionary<string, string>(state.HetznerServerTokens);
 
         MeterBox.ItemsSource = Enum.GetValues<MeterMode>()
             .Select(m => new ChoiceItem<MeterMode>(m, m.DisplayName())).ToList();
@@ -49,6 +54,7 @@ public partial class SettingsWindow : Window
             .Select(d => new ChoiceItem<int>(d, $"{d} 号")).ToList();
 
         ApiKeyBox.Password = _state.VultrApiKey;
+        HetznerTokenGlobalBox.Password = _state.HetznerApiToken;
         ConfigPathText.Text = new ConfigStore().FilePath;
         AboutVersionText.Text = $"v{AppInfo.Version}";
 
@@ -236,10 +242,23 @@ public partial class SettingsWindow : Window
             ? Visibility.Visible : Visibility.Collapsed;
         BwgPanel.Visibility = _current.Provider == ProviderKind.Bwg
             ? Visibility.Visible : Visibility.Collapsed;
+        RackNerdPanel.Visibility = _current.Provider == ProviderKind.Racknerd
+            ? Visibility.Visible : Visibility.Collapsed;
+        HetznerPanel.Visibility = _current.Provider == ProviderKind.Hetzner
+            ? Visibility.Visible : Visibility.Collapsed;
 
         InstanceIdBox.Text = _current.VultrInstanceId ?? "";
         BwgVeidBox.Text = _current.BwgVeid ?? "";
         BwgKeyBox.Password = _bwgKeys.GetValueOrDefault(_current.Id) ?? "";
+
+        var rnSecret = _rnSecrets.GetValueOrDefault(_current.Id);
+        RackNerdKeyBox.Password = rnSecret?.Key ?? "";
+        RackNerdHashBox.Password = rnSecret?.Hash ?? "";
+        RackNerdEndpointBox.Text = _current.RacknerdEndpoint ?? "";
+
+        HetznerServerIdBox.Text = _current.HetznerServerId ?? "";
+        HetznerTokenBox.Password = _hetznerServerTokens.GetValueOrDefault(_current.Id) ?? "";
+
         HostBox.Text = _current.SshHost ?? "";
         PortBox.Text = (_current.SshPort ?? 22).ToString();
         UserBox.Text = _current.SshUser ?? "";
@@ -278,6 +297,17 @@ public partial class SettingsWindow : Window
         var bwgKey = Nullify(BwgKeyBox.Password);
         if (bwgKey is null) _bwgKeys.Remove(_current.Id);
         else _bwgKeys[_current.Id] = bwgKey;
+
+        _current.RacknerdEndpoint = Nullify(RackNerdEndpointBox.Text);
+        var rnKey = Nullify(RackNerdKeyBox.Password);
+        var rnHash = Nullify(RackNerdHashBox.Password);
+        if (rnKey is null && rnHash is null) _rnSecrets.Remove(_current.Id);
+        else _rnSecrets[_current.Id] = new SecretStore.RackNerdSecret(rnKey ?? "", rnHash ?? "");
+
+        _current.HetznerServerId = Nullify(HetznerServerIdBox.Text);
+        var hzToken = Nullify(HetznerTokenBox.Password);
+        if (hzToken is null) _hetznerServerTokens.Remove(_current.Id);
+        else _hetznerServerTokens[_current.Id] = hzToken;
 
         _current.SshHost = Nullify(HostBox.Text);
         _current.SshPort = int.TryParse(PortBox.Text.Trim(), out var port) && port > 0 ? port : 22;
@@ -319,6 +349,10 @@ public partial class SettingsWindow : Window
 
     private void OnAddBwgClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Bwg);
 
+    private void OnAddRackNerdClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Racknerd);
+
+    private void OnAddHetznerClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Hetzner);
+
     private void OnAddSshClick(object sender, RoutedEventArgs e) => AddServer(ProviderKind.Ssh);
 
     private void AddServer(ProviderKind provider)
@@ -332,10 +366,12 @@ public partial class SettingsWindow : Window
             {
                 ProviderKind.Vultr => "新的 Vultr 实例",
                 ProviderKind.Bwg => "新的搬瓦工实例",
+                ProviderKind.Racknerd => "新的 RackNerd 实例",
+                ProviderKind.Hetzner => "新的 Hetzner 实例",
                 _ => "新的服务器",
             },
             Provider = provider,
-            // 搬瓦工与 Vultr 一样能从 API 拿到配额；SSH 没有配额来源，给个常见默认值。
+            // 搬瓦工、RackNerd、Hetzner 与 Vultr 一样能从 API 拿到配额；SSH 没有配额来源，给个常见默认值。
             QuotaGB = provider == ProviderKind.Ssh ? 1000 : 0,
             MeterMode = provider == ProviderKind.Ssh ? MeterMode.Sum : MeterMode.Outbound,
             ResetDay = 1,
@@ -365,8 +401,10 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _draft.Servers.RemoveAll(s => s.Id == _current.Id);
-        // 密钥不进配置文件，删机器时把它的 KiwiVM Key 一并从草稿里清掉。
+        // 密钥不进配置文件，删机器时把它的 Key 一并从草稿里清掉。
         _bwgKeys.Remove(_current.Id);
+        _rnSecrets.Remove(_current.Id);
+        _hetznerServerTokens.Remove(_current.Id);
         // 删掉的正好是托盘在显示的那台时把指向清掉，
         // 否则配置里会留下一个悬空 ID，看不出托盘为什么换了一台。
         if (_draft.MenuBarServerId == _current.Id) _draft.MenuBarServerId = null;
@@ -388,7 +426,13 @@ public partial class SettingsWindow : Window
         TestResult.Text = "测试中…";
         TestResult.Foreground = Theme.Unknown;
 
-        var error = await _state.TestServerAsync(_current, ApiKeyBox.Password, _bwgKeys);
+        var error = await _state.TestServerAsync(
+            _current,
+            ApiKeyBox.Password,
+            _bwgKeys,
+            _rnSecrets,
+            HetznerTokenGlobalBox.Password,
+            _hetznerServerTokens);
 
         TestButton.IsEnabled = true;
         if (error is null)
@@ -410,7 +454,13 @@ public partial class SettingsWindow : Window
         CommitMenuBarChoice();
         // 传副本：直接给 _draft 的话，保存后草稿与 _state.Config 就是同一个对象了 ——
         // 登记开机自启失败时窗口不关，之后的编辑会又直接改到正在生效的配置上。
-        _state.ApplyConfig(_draft.Clone(), ApiKeyBox.Password, _bwgKeys);
+        _state.ApplyConfig(
+            _draft.Clone(),
+            ApiKeyBox.Password,
+            _bwgKeys,
+            _rnSecrets,
+            HetznerTokenGlobalBox.Password,
+            _hetznerServerTokens);
         // 登记失败时不关窗，否则那条错误提示刚显示出来就随窗口一起消失了。
         if (!CommitLaunchAtLogin()) return;
         Close();

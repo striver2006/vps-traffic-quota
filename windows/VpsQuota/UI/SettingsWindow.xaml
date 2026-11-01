@@ -51,13 +51,15 @@
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="服务器" Style="{StaticResource SectionTitle}" Margin="6,0,0,8"/>
-                        <StackPanel Orientation="Horizontal" Margin="4,0,4,10">
-                            <Button Content="Vultr" Padding="10,6" Click="OnAddVultrClick"/>
-                            <Button Content="搬瓦工" Padding="10,6" Margin="6,0,0,0" Click="OnAddBwgClick"/>
-                            <Button Content="SSH" Padding="10,6" Margin="6,0,0,0" Click="OnAddSshClick"/>
-                            <Button x:Name="RemoveButton" Content="删除" Padding="10,6" Margin="6,0,0,0"
+                        <WrapPanel Margin="4,0,4,10">
+                            <Button Content="Vultr" Padding="7,5" Margin="0,0,4,4" Click="OnAddVultrClick"/>
+                            <Button Content="搬瓦工" Padding="7,5" Margin="0,0,4,4" Click="OnAddBwgClick"/>
+                            <Button Content="RackNerd" Padding="7,5" Margin="0,0,4,4" Click="OnAddRackNerdClick"/>
+                            <Button Content="Hetzner" Padding="7,5" Margin="0,0,4,4" Click="OnAddHetznerClick"/>
+                            <Button Content="SSH" Padding="7,5" Margin="0,0,4,4" Click="OnAddSshClick"/>
+                            <Button x:Name="RemoveButton" Content="删除" Padding="7,5" Margin="0,0,0,4"
                                     Click="OnRemoveClick"/>
-                        </StackPanel>
+                        </WrapPanel>
                     </StackPanel>
                     <ListBox x:Name="ServerList" Background="Transparent" BorderThickness="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -121,6 +123,31 @@
                                 <PasswordBox x:Name="BwgKeyBox" Padding="7,6" Margin="0,0,0,4"/>
                                 <TextBlock Style="{StaticResource FieldHelp}"
                                            Text="两者都在 KiwiVM 面板（kiwivm.64clouds.com）左侧「KiwiVM API」一页。VEID 随配置文件走；API Key 按服务器生成，用 DPAPI 加密保存、不写入配置文件。重置日请对照面板上的「下次重置」日期填写。"/>
+                                <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
+                            </StackPanel>
+
+                            <StackPanel x:Name="RackNerdPanel">
+                                <TextBlock Text="RackNerd API Key" Style="{StaticResource FieldLabel}"/>
+                                <PasswordBox x:Name="RackNerdKeyBox" Padding="7,6" Margin="0,0,0,10"/>
+
+                                <TextBlock Text="RackNerd API Hash" Style="{StaticResource FieldLabel}"/>
+                                <PasswordBox x:Name="RackNerdHashBox" Padding="7,6" Margin="0,0,0,10"/>
+
+                                <TextBlock Text="端点 URL（可选）" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="RackNerdEndpointBox" Padding="7,6" Margin="0,0,0,4"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="登录 RackNerd VPS 控制面板（通常为 nerdvm.racknerd.com），进入对应 VPS 的「API」选项卡，点击「Generate」生成 API Key 与 API Hash。端点 URL 留空默认使用 nerdvm.racknerd.com。密钥保存在 DPAPI 中，不写入配置文件。"/>
+                                <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
+                            </StackPanel>
+
+                            <StackPanel x:Name="HetznerPanel">
+                                <TextBlock Text="Hetzner Server ID" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="HetznerServerIdBox" Padding="7,6" Margin="0,0,0,10"/>
+
+                                <TextBlock Text="API Token（可选覆盖）" Style="{StaticResource FieldLabel}"/>
+                                <PasswordBox x:Name="HetznerTokenBox" Padding="7,6" Margin="0,0,0,4"/>
+                                <TextBlock Style="{StaticResource FieldHelp}"
+                                           Text="Server ID 可在 Hetzner Cloud Console 中该主机的详情页 URL 或概览中找到。若此处 API Token 留空，将自动使用「通用设置」中的全局 Hetzner API Token。密钥保存在 DPAPI 中，不写入配置文件。"/>
                                 <Separator Background="#EEF2F7" Margin="0,14,0,14"/>
                             </StackPanel>
 
@@ -236,6 +263,17 @@
                         <PasswordBox x:Name="ApiKeyBox" Padding="7,6"/>
                         <TextBlock Style="{StaticResource FieldHelp}"
                                    Text="在 Vultr 后台 Account → API 页面创建。该页面默认启用访问控制，需要把当前出口 IP 加入允许列表，否则会返回 403。密钥使用 Windows DPAPI 以当前用户身份加密保存，不写入配置文件。"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Hetzner API" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="API Token" Style="{StaticResource FieldLabel}" Margin="0,12,0,4"/>
+                        <PasswordBox x:Name="HetznerTokenGlobalBox" Padding="7,6"/>
+                        <TextBlock Style="{StaticResource FieldHelp}"
+                                   Text="在 Hetzner Cloud Console 中选择项目，进入 Security → API Tokens 页面生成（Read 权限即可）。作为全局默认 Token 供所有 Hetzner 实例使用，也可在实例编辑页单独覆盖。密钥保存在 Windows DPAPI 中，不写入配置文件。"/>
                     </StackPanel>
                 </Border>
 

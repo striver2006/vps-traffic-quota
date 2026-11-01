@@ -56,6 +56,17 @@ public sealed class AppState
     public IReadOnlyDictionary<string, string> BwgApiKeys { get; private set; } =
         new Dictionary<string, string>();
 
+    /// <summary>Hetzner 全局 API Token。</summary>
+    public string HetznerApiToken { get; set; } = "";
+
+    /// <summary>Hetzner 独立 API Token（按服务器覆盖）：serverId → token。</summary>
+    public IReadOnlyDictionary<string, string> HetznerServerTokens { get; private set; } =
+        new Dictionary<string, string>();
+
+    /// <summary>RackNerd 凭据（Key & Hash）：serverId → RackNerdSecret。</summary>
+    public IReadOnlyDictionary<string, SecretStore.RackNerdSecret> RackNerdSecrets { get; private set; } =
+        new Dictionary<string, SecretStore.RackNerdSecret>();
+
     public IReadOnlyList<ServerStatus> Statuses { get; private set; } = Array.Empty<ServerStatus>();
     public bool IsRefreshing { get; private set; }
     public DateTime? LastRefreshAt { get; private set; }
@@ -94,12 +105,18 @@ public sealed class AppState
 
         VultrApiKey = SecretStore.GetVultrApiKey() ?? "";
         BwgApiKeys = SecretStore.GetBwgApiKeys();
+        HetznerApiToken = SecretStore.GetHetznerApiToken() ?? "";
+        HetznerServerTokens = SecretStore.GetHetznerServerTokens();
+        RackNerdSecrets = SecretStore.GetRackNerdSecrets();
 
         try
         {
             _store = new SqliteStore(AppPaths.DatabaseFile);
             _monitor = new TrafficMonitor(_store, Config, VultrApiKey);
             _monitor.SetBwgApiKeys(BwgApiKeys);
+            _monitor.SetHetznerApiToken(HetznerApiToken);
+            _monitor.SetHetznerServerTokens(HetznerServerTokens);
+            _monitor.SetRackNerdSecrets(RackNerdSecrets);
         }
         catch (Exception ex)
         {
@@ -203,19 +220,36 @@ public sealed class AppState
     /// 不该顺手把整份编辑中的配置提交掉 —— 否则用户点完测试再点 X 也放弃不了改动。
     /// </remarks>
     public async Task<string?> TestServerAsync(
-        ServerConfig server, string apiKey, IReadOnlyDictionary<string, string>? bwgKeys = null)
+        ServerConfig server,
+        string apiKey,
+        IReadOnlyDictionary<string, string>? bwgKeys = null,
+        IReadOnlyDictionary<string, SecretStore.RackNerdSecret>? rnSecrets = null,
+        string? hetznerToken = null,
+        IReadOnlyDictionary<string, string>? hetznerServerTokens = null)
     {
         if (_monitor is null) return "数据库未就绪";
 
         var savedKey = VultrApiKey;
         var savedBwgKeys = BwgApiKeys;
+        var savedRnSecrets = RackNerdSecrets;
+        var savedHetznerToken = HetznerApiToken;
+        var savedHetznerServerTokens = HetznerServerTokens;
+
         _monitor.SetVultrApiKey(string.IsNullOrEmpty(apiKey) ? null : apiKey);
-        // 搬瓦工的 Key 属于被测的这台，只带它一条，避免其他服务器的旧值干扰。
-        var testKeys = new Dictionary<string, string>
+        _monitor.SetBwgApiKeys(new Dictionary<string, string>
         {
             [server.Id] = bwgKeys?.GetValueOrDefault(server.Id) ?? "",
-        };
-        _monitor.SetBwgApiKeys(testKeys);
+        });
+        if (rnSecrets?.TryGetValue(server.Id, out var rn) == true)
+        {
+            _monitor.SetRackNerdSecrets(new Dictionary<string, SecretStore.RackNerdSecret> { [server.Id] = rn });
+        }
+        _monitor.SetHetznerApiToken(string.IsNullOrEmpty(hetznerToken) ? null : hetznerToken);
+        _monitor.SetHetznerServerTokens(new Dictionary<string, string>
+        {
+            [server.Id] = hetznerServerTokens?.GetValueOrDefault(server.Id) ?? "",
+        });
+
         try
         {
             var error = await _monitor.RefreshOneAsync(server, DateTime.UtcNow, _lifetime.Token);
@@ -228,19 +262,37 @@ public sealed class AppState
             // 草稿凭据只在这一次测试里有效，测完还给已保存的那些。
             _monitor.SetVultrApiKey(string.IsNullOrEmpty(savedKey) ? null : savedKey);
             _monitor.SetBwgApiKeys(savedBwgKeys);
+            _monitor.SetRackNerdSecrets(savedRnSecrets);
+            _monitor.SetHetznerApiToken(savedHetznerToken);
+            _monitor.SetHetznerServerTokens(savedHetznerServerTokens);
         }
     }
 
     /// <summary>用设置窗口编辑好的草稿整体替换当前配置并落盘。</summary>
-    public void ApplyConfig(AppConfig config, string apiKey, IReadOnlyDictionary<string, string>? bwgKeys = null)
+    public void ApplyConfig(
+        AppConfig config,
+        string apiKey,
+        IReadOnlyDictionary<string, string>? bwgKeys = null,
+        IReadOnlyDictionary<string, SecretStore.RackNerdSecret>? rnSecrets = null,
+        string? hetznerToken = null,
+        IReadOnlyDictionary<string, string>? hetznerServerTokens = null)
     {
         Config = config;
         VultrApiKey = apiKey;
+        HetznerApiToken = hetznerToken ?? "";
+
         // 已删除服务器的 Key 不留在密钥文件里。以本次配置里的服务器为准整体重写。
         var validIds = config.Servers.Select(s => s.Id).ToHashSet();
         BwgApiKeys = (bwgKeys ?? new Dictionary<string, string>())
             .Where(kv => validIds.Contains(kv.Key) && !string.IsNullOrEmpty(kv.Value))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
+        RackNerdSecrets = (rnSecrets ?? new Dictionary<string, SecretStore.RackNerdSecret>())
+            .Where(kv => validIds.Contains(kv.Key) && !string.IsNullOrEmpty(kv.Value.Key) && !string.IsNullOrEmpty(kv.Value.Hash))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        HetznerServerTokens = (hetznerServerTokens ?? new Dictionary<string, string>())
+            .Where(kv => validIds.Contains(kv.Key) && !string.IsNullOrEmpty(kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
         SaveConfig();
     }
 
@@ -251,6 +303,9 @@ public sealed class AppState
             _configStore.Save(Config);
             SecretStore.SetVultrApiKey(string.IsNullOrEmpty(VultrApiKey) ? null : VultrApiKey);
             SecretStore.SetBwgApiKeys(BwgApiKeys);
+            SecretStore.SetHetznerApiToken(string.IsNullOrEmpty(HetznerApiToken) ? null : HetznerApiToken);
+            SecretStore.SetHetznerServerTokens(HetznerServerTokens);
+            SecretStore.SetRackNerdSecrets(RackNerdSecrets);
         }
         catch (Exception ex)
         {
@@ -262,6 +317,9 @@ public sealed class AppState
         _monitor?.UpdateConfig(Config);
         _monitor?.SetVultrApiKey(string.IsNullOrEmpty(VultrApiKey) ? null : VultrApiKey);
         _monitor?.SetBwgApiKeys(BwgApiKeys);
+        _monitor?.SetHetznerApiToken(string.IsNullOrEmpty(HetznerApiToken) ? null : HetznerApiToken);
+        _monitor?.SetHetznerServerTokens(HetznerServerTokens);
+        _monitor?.SetRackNerdSecrets(RackNerdSecrets);
         ScheduleTimer();
         _ = RefreshAsync();
     }

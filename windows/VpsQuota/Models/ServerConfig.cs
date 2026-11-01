@@ -45,6 +45,14 @@ public sealed class ServerConfig
     // API Key 是按服务器发的，存在 DPAPI 密钥文件里，见 SecretStore.GetBwgApiKeys。
     public string? BwgVeid { get; set; }
 
+    // RackNerd 专用。端点随配置文件走，默认为 https://nerdvm.racknerd.com/api/client/command.php。
+    // API Key 与 API Hash 按服务器发，存在 DPAPI 密钥文件里，见 SecretStore.GetRackNerdSecrets。
+    public string? RacknerdEndpoint { get; set; }
+
+    // Hetzner 专用。实例 ID 随配置文件走；
+    // API Token 存在 DPAPI 密钥文件里，见 SecretStore.GetHetznerApiToken / GetHetznerServerTokens。
+    public string? HetznerServerId { get; set; }
+
     // SSH 专用
     public string? SshHost { get; set; }
     public int? SshPort { get; set; }

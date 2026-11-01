@@ -31,6 +31,9 @@ struct SettingsView: View {
                     ServerEditor(
                         server: $model.config.servers[index],
                         bwgAPIKey: bwgKeyBinding(for: id),
+                        rackNerdKey: rackNerdKeyBinding(for: id),
+                        rackNerdHash: rackNerdHashBinding(for: id),
+                        hetznerServerToken: hetznerServerTokenBinding(for: id),
                         testResult: testResults[id],
                         isTesting: testingId == id,
                         onTest: { runTest(model.config.servers[index]) }
@@ -84,6 +87,8 @@ struct SettingsView: View {
                 Menu {
                     Button("Vultr 实例") { addServer(provider: .vultr) }
                     Button("搬瓦工（KiwiVM API）") { addServer(provider: .bwg) }
+                    Button("RackNerd（SolusVM API）") { addServer(provider: .racknerd) }
+                    Button("Hetzner Cloud") { addServer(provider: .hetzner) }
                     Button("SSH + vnstat（DMIT 等）") { addServer(provider: .ssh) }
                 } label: {
                     Image(systemName: "plus")
@@ -130,6 +135,17 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Vultr 凭据")
+            }
+
+            Section {
+                SecureField("Hetzner API Token", text: $model.hetznerAPIToken)
+                    .textFieldStyle(.roundedBorder)
+                Text("在 Hetzner Cloud Console 中选择项目，进入 Security → API Tokens 页面生成（Read 权限即可）。作为全局默认 Token 供所有 Hetzner 实例使用，也可在实例编辑页单独覆盖。密钥保存在系统钥匙串，不写入配置文件。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Hetzner 凭据")
             }
 
             Section {
@@ -246,6 +262,8 @@ struct SettingsView: View {
         case .vultr: return "cloud"
         case .bwg: return "externaldrive.connected.to.line.below"
         case .ssh: return "terminal"
+        case .racknerd: return "server.rack"
+        case .hetzner: return "network"
         }
     }
 
@@ -264,12 +282,66 @@ struct SettingsView: View {
         )
     }
 
+    private func rackNerdKeyBinding(for id: String) -> Binding<String> {
+        @Bindable var model = model
+        return Binding(
+            get: { model.rackNerdSecrets[id]?.key ?? "" },
+            set: { newValue in
+                var secret = model.rackNerdSecrets[id] ?? KeychainStore.RackNerdSecret(key: "", hash: "")
+                secret.key = newValue
+                if secret.key.isEmpty && secret.hash.isEmpty {
+                    model.rackNerdSecrets.removeValue(forKey: id)
+                } else {
+                    model.rackNerdSecrets[id] = secret
+                }
+            }
+        )
+    }
+
+    private func rackNerdHashBinding(for id: String) -> Binding<String> {
+        @Bindable var model = model
+        return Binding(
+            get: { model.rackNerdSecrets[id]?.hash ?? "" },
+            set: { newValue in
+                var secret = model.rackNerdSecrets[id] ?? KeychainStore.RackNerdSecret(key: "", hash: "")
+                secret.hash = newValue
+                if secret.key.isEmpty && secret.hash.isEmpty {
+                    model.rackNerdSecrets.removeValue(forKey: id)
+                } else {
+                    model.rackNerdSecrets[id] = secret
+                }
+            }
+        )
+    }
+
+    private func hetznerServerTokenBinding(for id: String) -> Binding<String> {
+        @Bindable var model = model
+        return Binding(
+            get: { model.hetznerServerTokens[id] ?? "" },
+            set: { newValue in
+                if newValue.isEmpty {
+                    model.hetznerServerTokens.removeValue(forKey: id)
+                } else {
+                    model.hetznerServerTokens[id] = newValue
+                }
+            }
+        )
+    }
+
     private func addServer(provider: ProviderKind) {
         @Bindable var model = model
         let id = "\(provider.rawValue)-\(UUID().uuidString.prefix(8).lowercased())"
+        let defaultName: String
+        switch provider {
+        case .vultr: defaultName = "新的 Vultr 实例"
+        case .bwg: defaultName = "新的搬瓦工实例"
+        case .racknerd: defaultName = "新的 RackNerd 实例"
+        case .hetzner: defaultName = "新的 Hetzner 实例"
+        case .ssh: defaultName = "新的服务器"
+        }
         let server = ServerConfig(
             id: id,
-            name: provider == .vultr ? "新的 Vultr 实例" : (provider == .bwg ? "新的搬瓦工实例" : "新的服务器"),
+            name: defaultName,
             provider: provider,
             quotaGB: provider == .ssh ? 1000 : 0,
             meterMode: provider == .ssh ? .sum : .outbound,

@@ -34,7 +34,7 @@ public class CrossPlatformConfigTests
         Assert.Equal(60, config.RefreshIntervalMinutes);
         Assert.Equal("dmit-lax", config.MenuBarServerId);
         Assert.True(config.MenuBarShowsRemaining);
-        Assert.Equal(3, config.Servers.Count);
+        Assert.Equal(5, config.Servers.Count);
     }
 
     [Fact(DisplayName = "枚举一律解析自小写字符串，与 macOS 端的 RawValue 一致")]
@@ -53,6 +53,16 @@ public class CrossPlatformConfigTests
         Assert.Equal(16, bwg.ResetDay);
         // 字段名与 macOS 端逐字对应：VEID 叫 bwgVeid
         Assert.StartsWith("把 KiwiVM", bwg.BwgVeid);
+
+        var rn = config.Servers.Single(s => s.Id == "rn-lax");
+        Assert.Equal(ProviderKind.Racknerd, rn.Provider);
+        Assert.Equal(MeterMode.Outbound, rn.MeterMode);
+        Assert.Equal(1, rn.ResetDay);
+
+        var hetzner = config.Servers.Single(s => s.Id == "hetzner-fsn1");
+        Assert.Equal(ProviderKind.Hetzner, hetzner.Provider);
+        Assert.Equal(MeterMode.Outbound, hetzner.MeterMode);
+        Assert.Equal("12345678", hetzner.HetznerServerId);
 
         var dmit = config.Servers.Single(s => s.Id == "dmit-lax");
         Assert.Equal(ProviderKind.Ssh, dmit.Provider);

@@ -2,7 +2,7 @@
 ; 用于为 VPS 流量监控生成 Windows 安装包（支持 x64 和 arm64）
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.2.0"
 #endif
 
 #ifndef AppArch

@@ -19,8 +19,22 @@ public static class SecretStore
     /// <summary>搬瓦工的 Key 按 VEID（即按服务器）发，条目名带这个前缀。</summary>
     private const string BwgKeyPrefix = "bwg:";
 
+    /// <summary>Hetzner 全局 API Token。</summary>
+    private const string HetznerTokenName = "hetznerApiToken";
+
+    /// <summary>Hetzner 按服务器配置的独立 Token 前缀。</summary>
+    private const string HetznerKeyPrefix = "hetzner:";
+
+    /// <summary>RackNerd API Key 前缀。</summary>
+    private const string RackNerdKeyPrefix = "rn_key:";
+
+    /// <summary>RackNerd API Hash 前缀。</summary>
+    private const string RackNerdHashPrefix = "rn_hash:";
+
     /// <summary>额外的熵，让密文不能被同一用户下的其他程序顺手解开。</summary>
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("io.vpsquota.VPSTrafficQuota");
+
+    public sealed record RackNerdSecret(string Key, string Hash);
 
     public static string? GetVultrApiKey() => Read().GetValueOrDefault(VultrKeyName);
 
@@ -50,6 +64,79 @@ public static class SecretStore
             foreach (var (serverId, key) in keys)
             {
                 if (!string.IsNullOrEmpty(key)) all[BwgKeyPrefix + serverId] = key;
+            }
+        }
+        Write(all);
+    }
+
+    public static string? GetHetznerApiToken() => Read().GetValueOrDefault(HetznerTokenName);
+
+    public static void SetHetznerApiToken(string? token)
+    {
+        var all = Read();
+        if (string.IsNullOrEmpty(token)) all.Remove(HetznerTokenName);
+        else all[HetznerTokenName] = token;
+        Write(all);
+    }
+
+    /// <summary>serverId → Hetzner 独立 Token。</summary>
+    public static Dictionary<string, string> GetHetznerServerTokens() => Read()
+        .Where(kv => kv.Key.StartsWith(HetznerKeyPrefix, StringComparison.Ordinal))
+        .ToDictionary(kv => kv.Key[HetznerKeyPrefix.Length..], kv => kv.Value);
+
+    public static void SetHetznerServerTokens(IReadOnlyDictionary<string, string>? tokens)
+    {
+        var all = Read();
+        foreach (var stale in all.Keys.Where(k => k.StartsWith(HetznerKeyPrefix, StringComparison.Ordinal)).ToList())
+        {
+            all.Remove(stale);
+        }
+        if (tokens is not null)
+        {
+            foreach (var (serverId, token) in tokens)
+            {
+                if (!string.IsNullOrEmpty(token)) all[HetznerKeyPrefix + serverId] = token;
+            }
+        }
+        Write(all);
+    }
+
+    /// <summary>serverId → RackNerdSecret (Key & Hash)。</summary>
+    public static Dictionary<string, RackNerdSecret> GetRackNerdSecrets()
+    {
+        var all = Read();
+        var result = new Dictionary<string, RackNerdSecret>();
+        foreach (var (k, v) in all)
+        {
+            if (k.StartsWith(RackNerdKeyPrefix, StringComparison.Ordinal))
+            {
+                var serverId = k[RackNerdKeyPrefix.Length..];
+                var hash = all.GetValueOrDefault(RackNerdHashPrefix + serverId) ?? "";
+                if (!string.IsNullOrEmpty(v) && !string.IsNullOrEmpty(hash))
+                {
+                    result[serverId] = new RackNerdSecret(v, hash);
+                }
+            }
+        }
+        return result;
+    }
+
+    public static void SetRackNerdSecrets(IReadOnlyDictionary<string, RackNerdSecret>? secrets)
+    {
+        var all = Read();
+        foreach (var stale in all.Keys.Where(k => k.StartsWith(RackNerdKeyPrefix, StringComparison.Ordinal) || k.StartsWith(RackNerdHashPrefix, StringComparison.Ordinal)).ToList())
+        {
+            all.Remove(stale);
+        }
+        if (secrets is not null)
+        {
+            foreach (var (serverId, secret) in secrets)
+            {
+                if (!string.IsNullOrEmpty(secret.Key) && !string.IsNullOrEmpty(secret.Hash))
+                {
+                    all[RackNerdKeyPrefix + serverId] = secret.Key;
+                    all[RackNerdHashPrefix + serverId] = secret.Hash;
+                }
             }
         }
         Write(all);

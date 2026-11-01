@@ -38,8 +38,8 @@
 |---|---|---|
 | `id` | string | **内部唯一标识，也是历史数据的关联键。改了它等于丢掉这台机器的全部历史。** |
 | `name` | string | 显示名称，随便起 |
-| `provider` | `"vultr"` \| `"bwg"` \| `"ssh"` | 数据来源 |
-| `quotaGB` | number | 月配额（GB）。填 `0` 时：Vultr / 搬瓦工自动采用 API 报告的值，SSH 则显示「配额未知」 |
+| `provider` | `"vultr"` \| `"bwg"` \| `"racknerd"` \| `"hetzner"` \| `"ssh"` | 数据来源 |
+| `quotaGB` | number | 月配额（GB）。填 `0` 时：Vultr / 搬瓦工 / RackNerd / Hetzner 自动采用 API 报告的值，SSH 则显示「配额未知」 |
 | `meterMode` | 见下 | 计费口径 |
 | `unitBase` | `"binary"` \| `"decimal"` | GB 进制 |
 | `resetDay` | int 1–31 | 每月配额归零的日子 |
@@ -58,6 +58,22 @@
 | `bwgVeid` | KiwiVM 面板「KiwiVM API」页里的 VEID（数字）。API Key **不在这里**：它按服务器生成，macOS 存钥匙串、Windows 存 DPAPI，都在设置界面按服务器填写 |
 
 接入步骤与工作原理（累计计数器如何变成每日流量）见 [`setup-bwg.md`](setup-bwg.md)。
+
+### `provider: "racknerd"` 专用
+
+| 字段 | 说明 |
+|---|---|
+| `racknerdEndpoint` | 可选。SolusVM API 端点，留空默认 `https://nerdvm.racknerd.com/api/client/command.php`。API Key 与 API Hash **不在这里**：按服务器生成，保存在系统安全存储中，在设置界面填写 |
+
+接入步骤与工作原理见 [`setup-racknerd.md`](setup-racknerd.md)。
+
+### `provider: "hetzner"` 专用
+
+| 字段 | 说明 |
+|---|---|
+| `hetznerServerId` | Hetzner Cloud Console 中该云服务器的纯数字实例 ID。API Token **不在这里**：保存在系统安全存储中，可在「通用设置」填写全局 Token 或在服务器页单独填写 |
+
+接入步骤见 [`setup-hetzner.md`](setup-hetzner.md)。
 
 ### `provider: "ssh"` 专用
 

@@ -157,6 +157,32 @@ struct CrossPlatformConfigTests {
         #expect(server.bwgVeid == "2234494")
     }
 
+    @Test("RackNerd 的字段名与 C# 端逐字对应：provider 为 racknerd，端点叫 racknerdEndpoint")
+    func racknerdFieldNames() throws {
+        let config = AppConfig(servers: [
+            ServerConfig(id: "rn-lax", name: "RackNerd", provider: .racknerd,
+                         racknerdEndpoint: "https://nerdvm.racknerd.com/api/client/command.php"),
+        ])
+        let json = try encode(config)
+        let server = try #require((json["servers"] as? [[String: Any]])?.first)
+
+        #expect(server["provider"] as? String == "racknerd")
+        #expect(server["racknerdEndpoint"] as? String == "https://nerdvm.racknerd.com/api/client/command.php")
+    }
+
+    @Test("Hetzner 的字段名与 C# 端逐字对应：provider 为 hetzner，ID 叫 hetznerServerId")
+    func hetznerFieldNames() throws {
+        let config = AppConfig(servers: [
+            ServerConfig(id: "hz-fsn1", name: "Hetzner", provider: .hetzner,
+                         hetznerServerId: "12345678"),
+        ])
+        let json = try encode(config)
+        let server = try #require((json["servers"] as? [[String: Any]])?.first)
+
+        #expect(server["provider"] as? String == "hetzner")
+        #expect(server["hetznerServerId"] as? String == "12345678")
+    }
+
     @Test("没有基准时该字段不出现在 JSON 里，不污染旧配置")
     func baselineOmittedWhenNil() throws {
         let config = AppConfig(servers: [
@@ -252,7 +278,7 @@ struct CrossPlatformConfigTests {
             .appendingPathComponent("shared/config.example.json")
         let data = try Data(contentsOf: url)
         let config = try JSONDecoder().decode(AppConfig.self, from: data)
-        #expect(config.servers.count == 3)
+        #expect(config.servers.count == 5)
         #expect(config.refreshIntervalMinutes == 60)
     }
 }

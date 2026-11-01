@@ -15,9 +15,12 @@ func printUsage() {
     用法：
       vpsquota-cli status              读取本地数据，显示各服务器当前账期用量（不联网）
       vpsquota-cli refresh             立即采集所有服务器并显示结果
-      vpsquota-cli probe               逐台测试连通性，Vultr 列实例、SSH 列网卡、搬瓦工读计数器
+      vpsquota-cli probe               逐台测试连通性，Vultr 列实例、SSH 列网卡、搬瓦工读计数器、RackNerd 读带宽、Hetzner 读流量
       vpsquota-cli vultr-instances     列出 Vultr 账号下所有实例及其 allowed_bandwidth
       vpsquota-cli bwg-probe <VEID> <API_KEY>   用凭据直接查一台搬瓦工的用量与配额（不用先写配置）
+      vpsquota-cli racknerd-probe <KEY> <HASH> [ENDPOINT] 用凭据直接查一台 RackNerd 的带宽与配额
+      vpsquota-cli hetzner-probe <SERVER_ID> <TOKEN>     用凭据直接查一台 Hetzner 的用量与配额
+      vpsquota-cli hetzner-instances <TOKEN>            列出 Hetzner 项目下所有服务器
       vpsquota-cli set-key <API_KEY>   把 Vultr API Key 写入钥匙串
       vpsquota-cli config-path         打印配置文件与数据库的位置
 
@@ -76,6 +79,9 @@ func loadMonitor() async throws -> (TrafficMonitor, AppConfig) {
     let key = try? KeychainStore.vultrAPIKey()
     let monitor = TrafficMonitor(store: store, config: config, vultrAPIKey: key)
     await monitor.setBwgAPIKeys((try? KeychainStore.bwgAPIKeys()) ?? [:])
+    await monitor.setRackNerdSecrets((try? KeychainStore.rackNerdSecrets()) ?? [:])
+    await monitor.setHetznerAPIToken(try? KeychainStore.hetznerAPIToken())
+    await monitor.setHetznerServerTokens((try? KeychainStore.hetznerServerTokens()) ?? [:])
     return (monitor, config)
 }
 
@@ -142,6 +148,50 @@ do {
         「KiwiVM API Key」一栏填写（存钥匙串，不进配置文件）。
         """)
 
+    case "racknerd-probe":
+        guard arguments.count >= 3 else {
+            print("用法：vpsquota-cli racknerd-probe <API_KEY> <API_HASH> [ENDPOINT]")
+            exit(1)
+        }
+        let endpoint = arguments.count >= 4 ? URL(string: arguments[3]) : nil
+        let collector = RackNerdCollector(apiKey: arguments[1], apiHash: arguments[2], endpoint: endpoint)
+        let s = try await collector.queryInfo()
+        print("✅ RackNerd API 可用：\n")
+        print("    已用带宽： \(ByteFormat.gb(Double(s.usedBytes) / 1_073_741_824))")
+        print("    月配额：   \(s.totalBytes > 0 ? ByteFormat.gb(Double(s.totalBytes) / 1_073_741_824) : "未设置")")
+        print("    剩余带宽： \(ByteFormat.gb(Double(s.freeBytes) / 1_073_741_824))")
+        if !s.percent.isEmpty { print("    使用比例： \(s.percent)") }
+
+    case "hetzner-probe":
+        guard arguments.count >= 3 else {
+            print("用法：vpsquota-cli hetzner-probe <SERVER_ID> <API_TOKEN>")
+            exit(1)
+        }
+        let collector = HetznerCollector(apiToken: arguments[2])
+        let info = try await collector.serverInfo(id: arguments[1])
+        print("✅ Hetzner API 可用：\n")
+        print("    服务器名称： \(info.name) (ID: \(info.id), 状态: \(info.status))")
+        print("    出站流量：   \(ByteFormat.gb(Double(info.outgoingTraffic ?? 0) / 1_073_741_824))")
+        print("    入站流量：   \(ByteFormat.gb(Double(info.ingoingTraffic ?? 0) / 1_073_741_824))")
+        print("    包含配额：   \((info.includedTraffic ?? 0) > 0 ? ByteFormat.gb(Double(info.includedTraffic ?? 0) / 1_073_741_824) : "未知")")
+
+    case "hetzner-instances":
+        let token = arguments.count >= 2 ? arguments[1] : (try? KeychainStore.hetznerAPIToken())
+        guard let token, !token.isEmpty else {
+            print("用法：vpsquota-cli hetzner-instances [API_TOKEN]")
+            print("或先在设置中填写 Hetzner API Token。")
+            exit(1)
+        }
+        let collector = HetznerCollector(apiToken: token)
+        let servers = try await collector.listServers()
+        print("Hetzner 项目下共有 \(servers.count) 台服务器：\n")
+        for s in servers {
+            let quota = (s.includedTraffic ?? 0) > 0 ? ByteFormat.gb(Double(s.includedTraffic ?? 0) / 1_073_741_824) : "未知"
+            let tx = ByteFormat.gb(Double(s.outgoingTraffic ?? 0) / 1_073_741_824)
+            print("  \(s.name) (ID: \(s.id))")
+            print("    状态：\(s.status)   出站已用：\(tx)   月配额：\(quota)")
+        }
+
     case "status":
         let (monitor, _) = try await loadMonitor()
         let statuses = await monitor.statuses()
@@ -199,6 +249,32 @@ do {
                     let summary = try await BwgCollector(apiKey: key).serviceInfo(veid: veid)
                     print("   ✅ API 可用")
                     printBwgSummary(summary)
+                case .racknerd:
+                    let secrets = (try? KeychainStore.rackNerdSecrets()) ?? [:]
+                    guard let secret = secrets[server.id], !secret.key.isEmpty, !secret.hash.isEmpty else {
+                        throw CollectError.misconfigured("钥匙串里没有这台服务器的 RackNerd API Key/Hash（在设置界面填写）")
+                    }
+                    let endpoint = server.racknerdEndpoint.flatMap { $0.isEmpty ? nil : URL(string: $0) }
+                    let collector = RackNerdCollector(apiKey: secret.key, apiHash: secret.hash, endpoint: endpoint)
+                    let summary = try await collector.queryInfo()
+                    let quota = summary.totalBytes > 0 ? ByteFormat.gb(Double(summary.totalBytes) / 1_073_741_824) : "未知"
+                    let used = ByteFormat.gb(Double(summary.usedBytes) / 1_073_741_824)
+                    print("   ✅ API 可用，已用 \(used) / 配额 \(quota) (\(summary.percent))")
+                case .hetzner:
+                    guard let serverId = server.hetznerServerId, !serverId.isEmpty else {
+                        throw CollectError.misconfigured("配置里没有填 Hetzner Server ID（hetznerServerId 字段）")
+                    }
+                    let serverTokens = (try? KeychainStore.hetznerServerTokens()) ?? [:]
+                    let globalToken = try? KeychainStore.hetznerAPIToken()
+                    let token = (serverTokens[server.id]?.isEmpty == false) ? serverTokens[server.id] : globalToken
+                    guard let validToken = token, !validToken.isEmpty else {
+                        throw CollectError.misconfigured("钥匙串里没有 Hetzner API Token（在通用设置或服务器编辑页填写）")
+                    }
+                    let collector = HetznerCollector(apiToken: validToken)
+                    let info = try await collector.serverInfo(id: serverId)
+                    let quota = (info.includedTraffic ?? 0) > 0 ? ByteFormat.gb(Double(info.includedTraffic ?? 0) / 1_073_741_824) : "未知"
+                    let usedTx = ByteFormat.gb(Double(info.outgoingTraffic ?? 0) / 1_073_741_824)
+                    print("   ✅ API 可用，匹配到实例「\(info.name)」(状态: \(info.status))，出站已用 \(usedTx) / 配额 \(quota)")
                 }
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
