@@ -170,7 +170,7 @@ public sealed class HetznerCollector : ICollector
             PeriodStart = periodStart,
         };
 
-        var days = new List<DailyUsage> { new(today, rxBytes: dayRx, txBytes: dayTx) };
+        var days = new List<DailyUsage> { new(today, dayRx, dayTx) };
         return (days, snapshot);
     }
 

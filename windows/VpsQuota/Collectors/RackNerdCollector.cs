@@ -150,7 +150,7 @@ public sealed class RackNerdCollector : ICollector
             Counter = counter,
         };
 
-        var days = new List<DailyUsage> { new(today, rxBytes: 0, txBytes: dayBytes) };
+        var days = new List<DailyUsage> { new(today, 0, dayBytes) };
         return (days, snapshot);
     }
 
