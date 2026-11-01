@@ -209,7 +209,7 @@ public sealed class RackNerdStateStore
 
     public RackNerdStateStore(string directory) => _directory = directory;
 
-    public Snapshot? Load(string serverId)
+    public RackNerdCollector.Snapshot? Load(string serverId)
     {
         var path = FilePath(serverId);
         if (!File.Exists(path)) return null;
