@@ -115,14 +115,12 @@
             <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,12">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" x:Name="DetailPanel">
                         <TextBlock x:Name="DetailName" FontSize="18" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>
-                        <!-- 用 DockPanel 而非水平 StackPanel：后者以无限宽度测量子元素，
-                             右侧配额文字超出列宽时会被直接裁剪而非换行 -->
                         <DockPanel Margin="0,7,0,0" LastChildFill="True">
                             <TextBlock x:Name="DetailUsed" DockPanel.Dock="Left" FontSize="30"
                                        FontWeight="SemiBold"
@@ -130,22 +128,26 @@
                             <TextBlock x:Name="DetailQuota" FontSize="13"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        VerticalAlignment="Bottom" Margin="8,0,0,6"
-                                       TextWrapping="Wrap"/>
+                                       TextWrapping="NoWrap"/>
                         </DockPanel>
                     </StackPanel>
                     <StackPanel x:Name="DetailSidePanel" Grid.Column="1" Margin="22,0,0,0"
                                 VerticalAlignment="Center">
                         <TextBlock x:Name="DetailPeriod" FontSize="13"
-                                   Foreground="{StaticResource TextSecondaryBrush}"/>
-                        <TextBlock x:Name="DetailProjection" FontSize="13" Margin="0,4,0,0"/>
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock x:Name="DetailProjection" FontSize="13" Margin="0,4,0,0"
+                                   TextWrapping="Wrap"/>
                         <TextBlock x:Name="DetailMeter" FontSize="13"
-                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0"/>
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0"
+                                   TextWrapping="Wrap"/>
                         <TextBlock x:Name="DetailWarning" FontSize="12" Foreground="#F28B21"
                                    TextWrapping="Wrap" Margin="0,8,0,0"/>
                         <TextBlock x:Name="DetailError" FontSize="12" Foreground="#E03B33"
                                    TextWrapping="Wrap" Margin="0,5,0,0"/>
                         <TextBlock x:Name="DetailLastSuccess" FontSize="12"
-                                   Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0"/>
+                                   Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0"
+                                   TextWrapping="Wrap"/>
                     </StackPanel>
                 </Grid>
             </Border>
