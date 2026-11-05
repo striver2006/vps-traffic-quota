@@ -1,6 +1,7 @@
 namespace VpsQuota.Collectors;
 
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,7 +15,7 @@ using VpsQuota.Storage;
 /// </summary>
 public sealed class RackNerdCollector : ICollector
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly HttpClient Http = CreateHttpClient();
 
     public const string DefaultEndpoint = "https://nerdvm.racknerd.com/api/client/command.php";
 
@@ -33,6 +34,15 @@ public sealed class RackNerdCollector : ICollector
         _apiHash = apiHash;
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? DefaultEndpoint : endpoint.Trim();
         _stateStore = new RackNerdStateStore(stateDirectory ?? Path.Combine(AppPaths.Directory, "racknerd-state"));
+    }
+
+    /// <summary>裸 HttpClient 默认不发送 User-Agent，这种「无名」请求最容易被 WAF 优先拦截；API 客户端应带上身份。</summary>
+    internal static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            $"VpsQuota/{AppInfo.Version} ({Environment.OSVersion.VersionString}; +{AppInfo.ProjectUrl})");
+        return client;
     }
 
     internal sealed class SolusResponse
@@ -168,7 +178,10 @@ public sealed class RackNerdCollector : ICollector
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw CollectException.Http((int)response.StatusCode, body);
+            var cfMitigated = response.Headers.TryGetValues("cf-mitigated", out var values)
+                ? values.FirstOrDefault()
+                : null;
+            throw BuildHttpError((int)response.StatusCode, cfMitigated, body);
         }
 
         try
@@ -194,6 +207,28 @@ public sealed class RackNerdCollector : ICollector
         }
 
         throw CollectException.Decode($"无法解析 RackNerd API 返回内容：{(body.Length > 200 ? body[..200] : body)}");
+    }
+
+    /// <summary>
+    /// 2026-10 起 nerdvm.racknerd.com 整站开启 Cloudflare bot 质询（403 + "Just a moment..." 页面，
+    /// 响应头 Cf-Mitigated: challenge），原生 HTTP 客户端无法通过。若把质询页 HTML 原样透出，
+    /// 用户会误以为是自己密钥配错，这里识别出来并写明原因与出路。
+    /// </summary>
+    internal static CollectException BuildHttpError(int status, string? cfMitigated, string body)
+    {
+        var challenged = (status == 403 || status == 503)
+            && (string.Equals(cfMitigated, "challenge", StringComparison.OrdinalIgnoreCase)
+                || body.Contains("Just a moment", StringComparison.Ordinal)
+                || body.Contains("Checking your browser", StringComparison.Ordinal));
+        if (challenged)
+        {
+            return new CollectException(
+                "RackNerd 端点被 Cloudflare 人机验证拦截（HTTP " + status + "）。"
+                + "这是 RackNerd 服务端的防护，API Key 与 API Hash 并没有问题："
+                + "可尝试把端点 URL 换成 VPS 开通邮件中的控制面板地址；"
+                + "仍失败时请向 RackNerd 提工单，要求对 API 放行。");
+        }
+        return CollectException.Http(status, body);
     }
 
     private static string? ExtractXmlTag(string text, string tag)

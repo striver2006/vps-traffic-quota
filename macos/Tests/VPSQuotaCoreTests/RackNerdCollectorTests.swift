@@ -77,4 +77,43 @@ struct RackNerdCollectorTests {
         #expect(loaded == s)
         #expect(store.load(serverId: "rn-2") == nil)
     }
+
+    @Test("403 + Cf-Mitigated 头：识别为 Cloudflare 质询拦截，给出可行动提示而不是透出 HTML")
+    func detectsCloudflareChallengeByHeader() {
+        let error = RackNerdCollector.buildHttpError(
+            status: 403, cfMitigated: "challenge", body: "<html>质询页正文……</html>")
+
+        #expect(error.errorDescription?.contains("Cloudflare 人机验证拦截（HTTP 403）") == true)
+        #expect(error.errorDescription?.contains("API Key 与 API Hash 并没有问题") == true)
+        #expect(error.errorDescription?.contains("<html>") != true)
+    }
+
+    @Test("403 + Just a moment 页面（代理剥掉响应头时按正文兜底识别）")
+    func detectsCloudflareChallengeByBody() {
+        let error = RackNerdCollector.buildHttpError(
+            status: 403, cfMitigated: nil,
+            body: "<!DOCTYPE html><html><head><title>Just a moment...</title></head></html>")
+
+        #expect(error.errorDescription?.contains("Cloudflare 人机验证拦截") == true)
+        #expect(error.errorDescription?.contains("<!DOCTYPE html>") != true)
+    }
+
+    @Test("503 全站攻击模式质询页同样识别")
+    func detectsUnderAttackModeChallenge() {
+        let error = RackNerdCollector.buildHttpError(
+            status: 503, cfMitigated: nil,
+            body: "<html>Checking your browser before accessing the site.</html>")
+
+        #expect(error.errorDescription?.contains("Cloudflare 人机验证拦截（HTTP 503）") == true)
+    }
+
+    @Test("普通 403：维持原有 HTTP 错误格式，保留上游报错正文")
+    func ordinary403KeepsHttpFormat() {
+        let error = RackNerdCollector.buildHttpError(
+            status: 403, cfMitigated: nil,
+            body: #"{"status":"error","statusmsg":"invalid key"}"#)
+
+        #expect(error.errorDescription?.hasPrefix("HTTP 403") == true)
+        #expect(error.errorDescription?.contains("invalid key") == true)
+    }
 }

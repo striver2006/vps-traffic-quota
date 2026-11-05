@@ -4,6 +4,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.2] - 2026-11-05
+
+### 修复
+
+- **RackNerd：改进 Cloudflare 人机验证拦截提示**：双端请求增加可识别的 User-Agent；识别 HTTP 403/503 质询响应后显示明确原因与处理建议，不再直接展示 HTML 错误页；普通 HTTP 错误仍保留上游响应正文。
+
 ## [1.2.1] - 2026-11-05
 
 ### 修复

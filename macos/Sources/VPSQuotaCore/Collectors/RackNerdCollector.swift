@@ -20,6 +20,9 @@ public struct RackNerdCollector: Collector {
 
     public static let defaultEndpoint = URL(string: "https://nerdvm.racknerd.com/api/client/command.php")!
 
+    /// URLSession 的默认 UA 是 URL 转义后的应用名 + CFNetwork 版本；换成规范的产品 UA，让服务端能识别请求来源。
+    static let userAgent = "VpsQuota/\(AppInfo.version) (macOS; +\(AppInfo.projectURL.absoluteString))"
+
     public init(
         apiKey: String,
         apiHash: String,
@@ -153,6 +156,24 @@ public struct RackNerdCollector: Collector {
 
     // MARK: - 网络请求与容错解析
 
+    /// 2026-10 起 nerdvm.racknerd.com 整站开启 Cloudflare bot 质询（403 + "Just a moment..." 页面，
+    /// 响应头 Cf-Mitigated: challenge），原生 HTTP 客户端无法通过。若把质询页 HTML 原样透出，
+    /// 用户会误以为是自己密钥配错，这里识别出来并写明原因与出路。与 Windows 端 BuildHttpError 逐条对应。
+    static func buildHttpError(status: Int, cfMitigated: String?, body: String) -> CollectError {
+        let challenged = (status == 403 || status == 503)
+            && (cfMitigated?.lowercased() == "challenge"
+                || body.contains("Just a moment")
+                || body.contains("Checking your browser"))
+        if challenged {
+            return .noData(
+                "RackNerd 端点被 Cloudflare 人机验证拦截（HTTP \(status)）。"
+                + "这是 RackNerd 服务端的防护，API Key 与 API Hash 并没有问题："
+                + "可尝试把端点 URL 换成 VPS 开通邮件中的控制面板地址；"
+                + "仍失败时请向 RackNerd 提工单，要求对 API 放行。")
+        }
+        return .http(status: status, body: body)
+    }
+
     private func requestRaw() async throws -> (status: String, statusmsg: String, bw: String?) {
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         var queryItems = components?.queryItems ?? []
@@ -172,13 +193,17 @@ public struct RackNerdCollector: Collector {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw CollectError.decode("非 HTTP 响应")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw CollectError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+            throw Self.buildHttpError(
+                status: http.statusCode,
+                cfMitigated: http.value(forHTTPHeaderField: "cf-mitigated"),
+                body: String(data: data, encoding: .utf8) ?? "")
         }
 
         // 尝试 JSON 解析

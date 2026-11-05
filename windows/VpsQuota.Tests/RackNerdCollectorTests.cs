@@ -120,4 +120,50 @@ public class RackNerdCollectorTests
             if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact(DisplayName = "403 + Cf-Mitigated 头：识别为 Cloudflare 质询拦截，给出可行动提示而不是透出 HTML")]
+    public void DetectsCloudflareChallengeByHeader()
+    {
+        var ex = RackNerdCollector.BuildHttpError(403, "challenge", "<html>质询页正文……</html>");
+
+        Assert.Contains("Cloudflare 人机验证拦截（HTTP 403）", ex.Message);
+        Assert.Contains("API Key 与 API Hash 并没有问题", ex.Message);
+        Assert.DoesNotContain("<html>", ex.Message);
+    }
+
+    [Fact(DisplayName = "403 + Just a moment 页面（代理剥掉响应头时按正文兜底识别）")]
+    public void DetectsCloudflareChallengeByBody()
+    {
+        var ex = RackNerdCollector.BuildHttpError(
+            403, null, "<!DOCTYPE html><html><head><title>Just a moment...</title></head></html>");
+
+        Assert.Contains("Cloudflare 人机验证拦截", ex.Message);
+        Assert.DoesNotContain("<!DOCTYPE html>", ex.Message);
+    }
+
+    [Fact(DisplayName = "503 全站攻击模式质询页同样识别")]
+    public void DetectsUnderAttackModeChallenge()
+    {
+        var ex = RackNerdCollector.BuildHttpError(503, null, "<html>Checking your browser before accessing the site.</html>");
+
+        Assert.Contains("Cloudflare 人机验证拦截（HTTP 503）", ex.Message);
+    }
+
+    [Fact(DisplayName = "普通 403：维持原有 HTTP 错误格式，保留上游报错正文")]
+    public void Ordinary403KeepsHttpFormat()
+    {
+        var ex = RackNerdCollector.BuildHttpError(403, null, "{\"status\":\"error\",\"statusmsg\":\"invalid key\"}");
+
+        Assert.StartsWith("HTTP 403", ex.Message);
+        Assert.Contains("invalid key", ex.Message);
+    }
+
+    [Fact(DisplayName = "HttpClient 带上了可识别的 User-Agent")]
+    public void HttpClientSendsUserAgent()
+    {
+        var ua = RackNerdCollector.CreateHttpClient().DefaultRequestHeaders.UserAgent.ToString();
+
+        Assert.StartsWith("VpsQuota/", ua);
+        Assert.Contains("github.com/striver2006/vps-traffic-quota", ua);
+    }
 }
